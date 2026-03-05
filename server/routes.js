@@ -28,6 +28,42 @@ function configureB2FromDB() {
   }
 }
 
+function getLastScheduledTime(accountId) {
+  const all = db.getVideos({ accountId, limit: 99999 });
+  const pending = all.filter(v => v.status === 'pendente' && v.scheduledFor);
+  if (!pending.length) return null;
+  const sorted = pending.sort((a, b) => new Date(b.scheduledFor) - new Date(a.scheduledFor));
+  return new Date(sorted[0].scheduledFor);
+}
+
+function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, lastScheduled = null) {
+  const dates = [];
+  let current;
+
+  if (lastScheduled && lastScheduled > new Date()) {
+    current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
+  } else {
+    current = new Date();
+    current.setHours(startH, startM, 0, 0);
+    if (current <= new Date()) current.setDate(current.getDate() + 1);
+  }
+
+  let slotInDay = 0;
+  for (let i = 0; i < total; i++) {
+    dates.push(new Date(current));
+    slotInDay++;
+    if (slotInDay >= postsPerDay) {
+      slotInDay = 0;
+      current = new Date(current);
+      current.setDate(current.getDate() + 1);
+      current.setHours(startH, startM, 0, 0);
+    } else {
+      current = new Date(current.getTime() + intervalMinutes * 60000);
+    }
+  }
+  return dates;
+}
+
 // ══ SETTINGS ══════════════════════════════════════════════════════
 router.get('/settings', (req, res) => {
   const s = db.getAllSettings();
@@ -134,7 +170,6 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
   configureB2FromDB();
   if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
 
-  // Extrair vídeos de ZIPs
   const allFiles = [...(req.files || [])];
   const videoFiles = allFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
   const zipFiles = allFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
@@ -156,16 +191,18 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
 
   if (!videoFiles.length) return res.status(400).json({ error: 'Nenhum vídeo encontrado nos arquivos enviados' });
 
+  // Responde imediatamente e processa em background
+  res.json({ success: true, total: videoFiles.length });
+
   const numCycles = Math.max(1, parseInt(cycles) || 1);
   const expandedFiles = [];
   for (let c = 1; c <= numCycles; c++) videoFiles.forEach(f => expandedFiles.push({ ...f, cycle: c }));
 
-  // Gerar agenda
   const { startTime, postsPerDay, intervalMinutes } = account;
   const [sh, sm] = startTime.split(':').map(Number);
-  const scheduledDates = generateSchedule(expandedFiles.length, postsPerDay, intervalMinutes, sh, sm);
+  const lastScheduled = getLastScheduledTime(accountId);
+  const scheduledDates = generateSchedule(expandedFiles.length, postsPerDay, intervalMinutes, sh, sm, lastScheduled);
 
-  const results = [];
   for (let i = 0; i < expandedFiles.length; i++) {
     const file = expandedFiles[i];
     try {
@@ -184,41 +221,14 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
       });
 
       ig.scheduleVideo(video.id);
-      results.push({ id: video.id, name: file.originalname, scheduled: scheduledDates[i] });
     } catch(e) {
       try { fs.unlinkSync(file.path); } catch {}
       console.error(`[Upload] ❌ ${file.originalname}: ${e.message}`);
-      results.push({ name: file.originalname, error: e.message });
     }
   }
 
-  const ok = results.filter(r => !r.error).length;
-  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + ok });
-
-  res.json({ success: true, total: results.length, ok, results });
+  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + expandedFiles.length });
 });
-
-function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM) {
-  const dates = [];
-  let current = new Date();
-  current.setHours(startH, startM, 0, 0);
-  if (current <= new Date()) current.setDate(current.getDate() + 1);
-
-  let slotInDay = 0;
-  for (let i = 0; i < total; i++) {
-    dates.push(new Date(current));
-    slotInDay++;
-    if (slotInDay >= postsPerDay) {
-      slotInDay = 0;
-      current = new Date(current);
-      current.setDate(current.getDate() + 1);
-      current.setHours(startH, startM, 0, 0);
-    } else {
-      current = new Date(current.getTime() + intervalMinutes * 60000);
-    }
-  }
-  return dates;
-}
 
 router.delete('/videos/:id', async (req, res) => {
   const v = db.getVideoById(req.params.id);
