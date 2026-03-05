@@ -1,8 +1,0 @@
-[phases.setup]
-nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
-
-[phases.install]
-cmds = ["npm install --build-from-source"]
-
-[start]
-cmd = "node server/index.js"
