@@ -230,7 +230,6 @@ router.delete('/videos/:id', async (req, res) => {
 
 router.post('/videos/cancel-pending', (req, res) => {
   const { accountId } = req.query;
-  // Cancel node-schedule jobs too
   const pending = db.getVideos({ accountId, status: 'pendente', limit: 99999 });
   pending.forEach(v => ig.cancelJob(v.id));
   const cancelled = db.cancelPendingVideos(accountId);
@@ -266,8 +265,5 @@ router.get('/export/csv', (req, res) => {
   res.setHeader('Content-Disposition','attachment;filename="cuttools_export.csv"');
   res.send('\uFEFF'+csv);
 });
-
-// Carregar B2 config ao iniciar
-configureB2FromDB();
 
 module.exports = router;
