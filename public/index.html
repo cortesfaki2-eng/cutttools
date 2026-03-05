@@ -488,13 +488,13 @@ function startUpload(files){
 }
 
 async function runUploadInBackground(qid,files,params,acc){
-  const BATCH=10;let done=0;const total=files.length;
+  const BATCH=500;let done=0;const total=files.length;
   for(let i=0;i<files.length;i+=BATCH){
     const batch=files.slice(i,i+BATCH);
     const fd=new FormData();
     batch.forEach(f=>fd.append('videos',f));
     Object.entries(params).forEach(([k,v])=>fd.append(k,v));
-    updateQueue(qid,done,total,'Enviando '+(i+1)+'–'+Math.min(i+BATCH,total)+' de '+total+' para B2...');
+    updateQueue(qid,done,total,'Enviando '+total+' vídeos para B2...');
     try{
       const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(r=>r.json());
       done+=batch.length;
