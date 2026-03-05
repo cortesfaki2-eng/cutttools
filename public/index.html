@@ -488,7 +488,7 @@ function startUpload(files){
 }
 
 async function runUploadInBackground(qid,files,params,acc){
-  const BATCH=1;let done=0;const total=files.length;
+  const BATCH=10;let done=0;const total=files.length;
   for(let i=0;i<files.length;i+=BATCH){
     const batch=files.slice(i,i+BATCH);
     const fd=new FormData();
