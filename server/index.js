@@ -24,6 +24,13 @@ async function start() {
   if (process.env.B2_ENDPOINT) db.setSetting('b2Endpoint', process.env.B2_ENDPOINT);
   if (process.env.B2_PUBLIC_URL) db.setSetting('b2PublicUrl', process.env.B2_PUBLIC_URL);
 
+  // Configurar B2 após DB estar pronto
+  const b2 = require('./b2');
+  const s = db.getAllSettings();
+  if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
+    b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+  }
+
   const stats = db.getStats();
   app.listen(PORT, () => {
     console.log(`\n✂️  CutTools v4.1 rodando em http://localhost:${PORT}`);
