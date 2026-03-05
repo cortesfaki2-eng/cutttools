@@ -39,7 +39,6 @@ function getLastScheduledTime(accountId) {
 function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, lastScheduled = null) {
   const dates = [];
   let current;
-
   if (lastScheduled && lastScheduled > new Date()) {
     current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
   } else {
@@ -47,7 +46,6 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, l
     current.setHours(startH, startM, 0, 0);
     if (current <= new Date()) current.setDate(current.getDate() + 1);
   }
-
   let slotInDay = 0;
   for (let i = 0; i < total; i++) {
     dates.push(new Date(current));
@@ -96,12 +94,10 @@ router.get('/accounts', (req, res) => {
 router.post('/accounts', async (req, res) => {
   const { accessToken, label, postsPerDay, startTime, endTime, intervalMode } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'Token obrigatório' });
-
   try {
     const info = await ig.fetchAccountFromToken(accessToken);
     const existing = db.getAccountByIgId(info.igAccountId);
     if (existing) return res.status(400).json({ error: `Conta @${info.username} já cadastrada` });
-
     const ppd = parseInt(postsPerDay) || 40;
     const st = startTime || '02:00';
     const et = endTime || '23:00';
@@ -109,14 +105,12 @@ router.post('/accounts', async (req, res) => {
     const [eh, em] = et.split(':').map(Number);
     const windowMins = (eh * 60 + em) - (sh * 60 + sm);
     const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
-
     const account = db.insertAccount({
       id: uuid(), accessToken, igAccountId: info.igAccountId, username: info.username,
       label: label || info.username, accountType: info.accountType,
       postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins,
       intervalMode: intervalMode || 'inteligente', status: 'active', totalPosts: 0,
     });
-
     res.json({ success: true, account: { ...account, accessToken: accessToken.slice(0,8)+'...' } });
   } catch(e) {
     res.status(400).json({ error: e.response?.data?.error?.message || e.message });
@@ -170,6 +164,7 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
   configureB2FromDB();
   if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
 
+  // Extrair vídeos de ZIPs
   const allFiles = [...(req.files || [])];
   const videoFiles = allFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
   const zipFiles = allFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
@@ -191,43 +186,61 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
 
   if (!videoFiles.length) return res.status(400).json({ error: 'Nenhum vídeo encontrado nos arquivos enviados' });
 
-  // Responde imediatamente e processa em background
-  res.json({ success: true, total: videoFiles.length });
-
   const numCycles = Math.max(1, parseInt(cycles) || 1);
-  const expandedFiles = [];
-  for (let c = 1; c <= numCycles; c++) videoFiles.forEach(f => expandedFiles.push({ ...f, cycle: c }));
+  const totalSlots = videoFiles.length * numCycles;
+
+  // Responde imediatamente
+  res.json({ success: true, total: totalSlots });
 
   const { startTime, postsPerDay, intervalMinutes } = account;
   const [sh, sm] = startTime.split(':').map(Number);
   const lastScheduled = getLastScheduledTime(accountId);
-  const scheduledDates = generateSchedule(expandedFiles.length, postsPerDay, intervalMinutes, sh, sm, lastScheduled);
+  const scheduledDates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, lastScheduled);
 
-  for (let i = 0; i < expandedFiles.length; i++) {
-    const file = expandedFiles[i];
+  // PASSO 1: Faz upload de CADA arquivo UMA VEZ e guarda o resultado
+  const uploaded = []; // { originalname, url, fileId, fileName, bytes }
+  for (let i = 0; i < videoFiles.length; i++) {
+    const file = videoFiles[i];
     try {
-      console.log(`[Upload] ${file.originalname} → B2... (${i+1}/${expandedFiles.length})`);
-      const uploaded = await b2.uploadFile(file.path, file.originalname, account.username);
-      fs.unlink(file.path, () => {});
-
-      const video = db.insertVideo({
-        id: uuid(), accountId, username: account.username,
-        originalName: file.originalname, batchName: batchName || file.originalname,
-        b2Url: uploaded.url, b2FileId: uploaded.fileId, b2FileName: uploaded.fileName,
-        bytes: uploaded.bytes, duration: 0,
-        caption: caption || '', hashtags: hashtags || '',
-        cycle: file.cycle, scheduledFor: scheduledDates[i].toISOString(),
-        status: 'pendente',
-      });
-
-      ig.scheduleVideo(video.id);
+      console.log(`[Upload] ${file.originalname} → B2... (${i+1}/${videoFiles.length})`);
+      const result = await b2.uploadFile(file.path, file.originalname, account.username);
+      uploaded.push({ originalname: file.originalname, ...result });
     } catch(e) {
-      try { fs.unlinkSync(file.path); } catch {}
       console.error(`[Upload] ❌ ${file.originalname}: ${e.message}`);
+      uploaded.push({ originalname: file.originalname, error: e.message });
+    } finally {
+      // Deleta o arquivo temp APÓS o upload (independente de erro)
+      fs.unlink(file.path, () => {});
     }
   }
 
-  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + expandedFiles.length });
+  // PASSO 2: Cria os registros no banco para cada ciclo reutilizando a URL do B2
+  let slot = 0;
+  for (let cycle = 1; cycle <= numCycles; cycle++) {
+    for (let i = 0; i < uploaded.length; i++) {
+      const u = uploaded[i];
+      if (u.error) { slot++; continue; }
+      const scheduledFor = scheduledDates[slot++];
+      try {
+        const video = db.insertVideo({
+          id: uuid(), accountId, username: account.username,
+          originalName: u.originalname, batchName: batchName || u.originalname,
+          b2Url: u.url, b2FileId: u.fileId, b2FileName: u.fileName,
+          bytes: u.bytes, duration: 0,
+          caption: caption || '', hashtags: hashtags || '',
+          cycle, scheduledFor: scheduledFor.toISOString(),
+          status: 'pendente',
+        });
+        ig.scheduleVideo(video.id);
+      } catch(e) {
+        console.error(`[DB] ❌ ${u.originalname} ciclo ${cycle}: ${e.message}`);
+      }
+    }
+  }
+
+  const ok = uploaded.filter(u => !u.error).length;
+  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + (ok * numCycles) });
+  console.log(`[Upload] ✅ Concluído: ${ok}/${videoFiles.length} arquivos × ${numCycles} ciclo(s) = ${ok * numCycles} posts agendados`);
 });
 
 router.delete('/videos/:id', async (req, res) => {
