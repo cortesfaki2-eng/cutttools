@@ -274,6 +274,7 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <h3>Editar Conta</h3>
     <input type="hidden" id="ea-id">
     <div class="field"><label>Label (apelido)</label><input id="ea-label" placeholder="Ex: Futebol..."></div>
+    <div class="field"><label>Novo Access Token <span style="color:var(--tx3);font-size:11px">(deixe vazio para manter o atual)</span></label><textarea id="ea-token" rows="2" placeholder="IGAAh... (opcional)"></textarea></div>
     <div class="field"><label>Vídeos por dia</label><input type="number" id="ea-ppd" min="1" max="100" oninput="updateEditPreview()"></div>
     <div class="r2">
       <div class="field"><label>Início da janela</label><input type="time" id="ea-st" oninput="updateEditPreview()"></div>
@@ -819,7 +820,8 @@ function updateEditPreview(){
 }
 async function saveEditAccount(){
   const id=document.getElementById('ea-id').value;
-  const body={label:document.getElementById('ea-label').value.trim(),postsPerDay:document.getElementById('ea-ppd').value,startTime:document.getElementById('ea-st').value,endTime:document.getElementById('ea-et').value};
+  const newToken=document.getElementById('ea-token').value.replace(/\s+/g,'').trim();
+  const body={label:document.getElementById('ea-label').value.trim(),postsPerDay:document.getElementById('ea-ppd').value,startTime:document.getElementById('ea-st').value,endTime:document.getElementById('ea-et').value,...(newToken?{accessToken:newToken}:{})};
   const btn=document.getElementById('editAccBtn');
   btn.disabled=true;btn.innerHTML='Salvando...';
   try{
