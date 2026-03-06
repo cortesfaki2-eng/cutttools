@@ -51,8 +51,6 @@ async function uploadFile(localPath, originalName, folder = 'videos') {
     Key: fileName,
     Body: fileBuffer,
     ContentType: contentType,
-    // Torna o arquivo público
-    ACL: 'public-read',
   }));
 
   // URL pública do arquivo
