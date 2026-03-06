@@ -12,6 +12,7 @@ const router = express.Router();
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/temp');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// Mapa de progresso dos uploads em andamento
 const uploadProgress = new Map();
 
 function configureB2FromDB() {
@@ -35,8 +36,10 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
   let current;
 
   if (lastScheduled && lastScheduled > now) {
+    // Continua depois do último agendado
     current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
   } else {
+    // Começa agora + 1 minuto
     current = new Date(now.getTime() + 60000);
     const todayStart = new Date(now); todayStart.setHours(startH, startM, 0, 0);
     const todayEnd = new Date(now); todayEnd.setHours(endH, endM, 0, 0);
@@ -70,8 +73,8 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
   }
   return dates;
 }
-}
 
+// ── SETTINGS ──────────────────────────────────────────
 router.get('/settings', (req, res) => {
   const s = db.getAllSettings();
   res.json({ b2KeyId: s.b2KeyId||'', b2AppKey: s.b2AppKey?'***'+s.b2AppKey.slice(-4):'', b2Bucket: s.b2Bucket||'', b2Endpoint: s.b2Endpoint||'', b2PublicUrl: s.b2PublicUrl||'' });
@@ -88,6 +91,7 @@ router.post('/settings', (req, res) => {
   res.json({ success: true });
 });
 
+// ── ACCOUNTS ──────────────────────────────────────────
 router.get('/accounts', (req, res) => {
   const accounts = db.getAccounts().map(a => ({ ...a, accessToken: a.accessToken ? a.accessToken.slice(0,8)+'...' : '' }));
   res.json(accounts);
@@ -125,6 +129,56 @@ router.put('/accounts/:id', (req, res) => {
   res.json({ success: true });
 });
 
+
+router.post('/accounts/:id/reschedule', async (req, res) => {
+  const { label, postsPerDay, startTime, endTime } = req.body;
+  const acc = db.getAccountById(req.params.id);
+  if (!acc) return res.status(404).json({ error: 'Conta nao encontrada' });
+
+  const ppd = parseInt(postsPerDay) || acc.postsPerDay;
+  const st = startTime || acc.startTime;
+  const et = endTime || acc.endTime;
+  const [sh, sm] = st.split(':').map(Number);
+  const [eh, em] = et.split(':').map(Number);
+  const windowMins = (eh * 60 + em) - (sh * 60 + sm);
+  const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
+
+  // Atualiza dados da conta
+  db.updateAccount(req.params.id, { label: label || acc.label, postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins });
+
+  // Busca todos os pendentes desta conta
+  const pending = db.getVideos({ accountId: req.params.id, status: 'pendente', limit: 99999 });
+  if (!pending.length) return res.json({ success: true, rescheduled: 0 });
+
+  // Cancela jobs atuais
+  pending.forEach(v => ig.cancelJob(v.id));
+
+  // Reagenda a partir de amanha inicio da janela
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(sh, sm, 0, 0);
+
+  let current = new Date(tomorrow);
+  let slotInDay = 0;
+
+  for (const video of pending) {
+    db.updateVideo(video.id, { scheduledFor: current.toISOString(), status: 'pendente', errorMsg: null });
+    ig.scheduleVideo(video.id);
+    slotInDay++;
+    if (slotInDay >= ppd) {
+      slotInDay = 0;
+      current = new Date(current);
+      current.setDate(current.getDate() + 1);
+      current.setHours(sh, sm, 0, 0);
+    } else {
+      current = new Date(current.getTime() + intervalMins * 60000);
+    }
+  }
+
+  console.log(`[Reschedule] @${acc.username}: ${pending.length} videos reagendados a partir de ${tomorrow.toISOString()}`);
+  res.json({ success: true, rescheduled: pending.length });
+});
+
 router.delete('/accounts/:id', (req, res) => { db.deleteAccount(req.params.id); res.json({ success: true }); });
 
 router.post('/accounts/:id/test', async (req, res) => {
@@ -136,6 +190,7 @@ router.post('/accounts/:id/test', async (req, res) => {
   } catch(e) { res.status(400).json({ error: e.response?.data?.error?.message || e.message }); }
 });
 
+// ── VIDEOS ────────────────────────────────────────────
 router.get('/videos', (req, res) => {
   const { accountId, status, date, limit = 300, offset = 0 } = req.query;
   const videos = db.getVideos({ accountId, status, date, limit: parseInt(limit), offset: parseInt(offset) });
@@ -143,6 +198,7 @@ router.get('/videos', (req, res) => {
   res.json({ videos, counts });
 });
 
+// Rota de upload usando busboy para streaming — responde imediatamente após receber os arquivos
 router.post('/videos/upload', (req, res) => {
   configureB2FromDB();
   if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
@@ -183,8 +239,10 @@ router.post('/videos/upload', (req, res) => {
       return;
     }
 
+    // Aguarda todos os arquivos serem salvos em disco
     let videoFiles = await Promise.all(savedFiles);
 
+    // Extrai ZIPs
     const zips = videoFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
     videoFiles = videoFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
 
@@ -208,7 +266,7 @@ router.post('/videos/upload', (req, res) => {
       return;
     }
 
-    const isLastOfBatch = fields.isLastOfBatch === 'true';
+    const isLastOfBatch = fields.isLastOfBatch === "true";
     const numCycles = isLastOfBatch ? Math.max(1, parseInt(cycles) || 1) : 1;
     const jobId = uuid();
 
@@ -219,11 +277,13 @@ router.post('/videos/upload', (req, res) => {
       startedAt: Date.now()
     });
 
+    // Responde IMEDIATAMENTE com o jobId
     if (!responded) {
       responded = true;
       res.json({ success: true, total: videoFiles.length * numCycles, jobId });
     }
 
+    // Processa em background
     processUpload(jobId, videoFiles, account, accountId, caption, hashtags, batchName, numCycles);
   });
 
@@ -242,7 +302,8 @@ async function processUpload(jobId, videoFiles, account, accountId, caption, has
   const lastScheduled = getLastScheduledTime(accountId);
   const totalSlots = videoFiles.length * numCycles;
   const scheduledDates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled);
-  
+
+  // Upload sequencial para B2
   const uploaded = [];
   for (let i = 0; i < videoFiles.length; i++) {
     const file = videoFiles[i];
@@ -264,6 +325,7 @@ async function processUpload(jobId, videoFiles, account, accountId, caption, has
     }
   }
 
+  // Registra no banco para cada ciclo
   let slot = 0;
   for (let cycle = 1; cycle <= numCycles; cycle++) {
     for (const u of uploaded) {
@@ -290,6 +352,7 @@ async function processUpload(jobId, videoFiles, account, accountId, caption, has
   console.log(`[Upload] ✅ ${ok}/${videoFiles.length} × ${numCycles} = ${ok * numCycles} agendados`);
 }
 
+// ── UPLOAD PROGRESS ───────────────────────────────────
 router.get('/upload-progress/:jobId', (req, res) => {
   const p = uploadProgress.get(req.params.jobId);
   if (!p) return res.json({ status: 'not_found' });
@@ -324,6 +387,7 @@ router.post('/videos/:id/publish-now', (req, res) => {
   res.json({ success: true });
 });
 
+// ── STATS ─────────────────────────────────────────────
 router.get('/stats', (req, res) => {
   const stats = db.getStats();
   stats.activeJobs = ig.getActiveJobCount();
