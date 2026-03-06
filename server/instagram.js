@@ -5,27 +5,9 @@ const db = require('./db');
 const jobs = new Map();
 
 async function fetchAccountFromToken(accessToken) {
-  // Tenta Instagram Business Login (token IGAAh... direto do Instagram)
-  try {
-    const r = await axios.get(`https://graph.facebook.com/v19.0/me`, {
-      params: { fields: 'id,username,account_type', access_token: accessToken }
-    });
-    if (r.data?.id && r.data?.username) {
-      return {
-        igAccountId: r.data.id,
-        username: r.data.username,
-        accountType: r.data.account_type || 'BUSINESS',
-      };
-    }
-  } catch(e) {
-    // Se falhar, tenta via Facebook Pages (token EAAh...)
-  }
-
-  // Fallback: Facebook Login via /me/accounts
-  const r2 = await axios.get(`https://graph.facebook.com/v19.0/me/accounts`, {
-    params: { fields: 'instagram_business_account{id,username,account_type}', access_token: accessToken }
-  });
-  const pages = r2.data?.data;
+  const url = `https://graph.facebook.com/v19.0/me/accounts?fields=instagram_business_account{id,username,account_type}&access_token=${accessToken}`;
+  const r = await axios.get(url);
+  const pages = r.data?.data;
   if (!pages || !pages.length) throw new Error('Nenhuma página Facebook encontrada com esse token');
 
   for (const page of pages) {
