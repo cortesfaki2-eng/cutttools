@@ -1,28 +1,24 @@
 {
   "name": "cuttools",
   "version": "4.1.0",
-  "description": "Automa\u00e7\u00e3o de postagens Instagram",
+  "description": "CutTools \u2014 60 contas, 12k posts, Backblaze B2 + SQLite",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.490.0",
-    "adm-zip": "^0.5.10",
-    "axios": "^1.6.7",
-    "busboy": "^1.6.0",
-    "dotenv": "^16.4.1",
     "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "axios": "^1.6.7",
     "node-schedule": "^2.1.1",
-    "sql.js": "^1.10.2",
+    "dotenv": "^16.4.5",
     "uuid": "^9.0.0",
-    "@aws-sdk/s3-request-presigner": "^3.490.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.3"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "adm-zip": "^0.5.10",
+    "sql.js": "^1.10.3",
+    "@aws-sdk/client-s3": "^3.540.0",
+    "form-data": "^4.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.490.0",
+    "busboy": "^1.6.0"
   }
 }
