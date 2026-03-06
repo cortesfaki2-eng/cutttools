@@ -1,9 +1,9 @@
 const express = require('express');
-const multer = require('multer');
 const AdmZip = require('adm-zip');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuid } = require('uuid');
+const Busboy = require('busboy');
 const db = require('./db');
 const ig = require('./instagram');
 const b2 = require('./b2');
@@ -12,14 +12,7 @@ const router = express.Router();
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/temp');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: UPLOAD_DIR,
-  filename: (req, file, cb) => {
-    const safe = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    cb(null, uuid() + '_' + safe);
-  }
-});
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 * 1024 } });
+const uploadProgress = new Map();
 
 function configureB2FromDB() {
   const s = db.getAllSettings();
@@ -133,48 +126,112 @@ router.get('/videos', (req, res) => {
   res.json({ videos, counts });
 });
 
-router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
-  const { accountId, caption, hashtags, cycles, batchName } = req.body;
-  if (!accountId) return res.status(400).json({ error: 'Selecione uma conta' });
-  const account = db.getAccountById(accountId);
-  if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
+router.post('/videos/upload', (req, res) => {
   configureB2FromDB();
   if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
 
-  const allFiles = [...(req.files || [])];
-  const videoFiles = allFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
-  const zipFiles = allFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
+  const fields = {};
+  const savedFiles = [];
+  let responded = false;
 
-  for (const zipFile of zipFiles) {
-    try {
-      const zip = new AdmZip(zipFile.path);
-      for (const entry of zip.getEntries()) {
-        if (/\.(mp4|mov|avi|mkv)$/i.test(entry.entryName) && !entry.isDirectory) {
-          const outName = uuid() + '_' + path.basename(entry.entryName);
-          const outPath = path.join(UPLOAD_DIR, outName);
-          fs.writeFileSync(outPath, entry.getData());
-          videoFiles.push({ path: outPath, originalname: path.basename(entry.entryName), size: entry.header.size });
+  const bb = Busboy({
+    headers: req.headers,
+    limits: { fileSize: 2 * 1024 * 1024 * 1024, files: 500 }
+  });
+
+  bb.on('field', (name, val) => { fields[name] = val; });
+
+  bb.on('file', (name, stream, info) => {
+    const originalname = Buffer.from(info.filename, 'latin1').toString('utf8');
+    const savePath = path.join(UPLOAD_DIR, uuid() + '_' + originalname);
+    const writeStream = fs.createWriteStream(savePath);
+    stream.pipe(writeStream);
+    savedFiles.push(new Promise((resolve, reject) => {
+      writeStream.on('finish', () => resolve({ path: savePath, originalname }));
+      writeStream.on('error', reject);
+    }));
+  });
+
+  bb.on('finish', async () => {
+    const { accountId, caption, hashtags, cycles, batchName } = fields;
+
+    if (!accountId) {
+      if (!responded) { responded = true; res.status(400).json({ error: 'Selecione uma conta' }); }
+      return;
+    }
+
+    const account = db.getAccountById(accountId);
+    if (!account) {
+      if (!responded) { responded = true; res.status(400).json({ error: 'Conta não encontrada' }); }
+      return;
+    }
+
+    let videoFiles = await Promise.all(savedFiles);
+
+    const zips = videoFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
+    videoFiles = videoFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
+
+    for (const zipFile of zips) {
+      try {
+        const zip = new AdmZip(zipFile.path);
+        for (const entry of zip.getEntries()) {
+          if (/\.(mp4|mov|avi|mkv)$/i.test(entry.entryName) && !entry.isDirectory) {
+            const outName = uuid() + '_' + path.basename(entry.entryName);
+            const outPath = path.join(UPLOAD_DIR, outName);
+            fs.writeFileSync(outPath, entry.getData());
+            videoFiles.push({ path: outPath, originalname: path.basename(entry.entryName) });
+          }
         }
-      }
-      fs.unlink(zipFile.path, () => {});
-    } catch(e) { console.error('[ZIP]', e.message); }
-  }
+        fs.unlink(zipFile.path, () => {});
+      } catch(e) { console.error('[ZIP]', e.message); }
+    }
 
-  if (!videoFiles.length) return res.status(400).json({ error: 'Nenhum vídeo encontrado nos arquivos enviados' });
+    if (!videoFiles.length) {
+      if (!responded) { responded = true; res.status(400).json({ error: 'Nenhum vídeo encontrado' }); }
+      return;
+    }
 
-  const numCycles = Math.max(1, parseInt(cycles) || 1);
-  const totalSlots = videoFiles.length * numCycles;
-  res.json({ success: true, total: totalSlots });
+    const numCycles = Math.max(1, parseInt(cycles) || 1);
+    const jobId = uuid();
 
+    uploadProgress.set(jobId, {
+      jobId, accountId, username: account.username,
+      total: videoFiles.length, done: 0, errors: 0,
+      currentFile: '', status: 'uploading', pct: 0,
+      startedAt: Date.now()
+    });
+
+    if (!responded) {
+      responded = true;
+      res.json({ success: true, total: videoFiles.length * numCycles, jobId });
+    }
+
+    processUpload(jobId, videoFiles, account, accountId, caption, hashtags, batchName, numCycles);
+  });
+
+  bb.on('error', (err) => {
+    console.error('[Upload] Busboy error:', err.message);
+    if (!responded) { responded = true; res.status(500).json({ error: err.message }); }
+  });
+
+  req.pipe(bb);
+});
+
+async function processUpload(jobId, videoFiles, account, accountId, caption, hashtags, batchName, numCycles) {
   const { startTime, postsPerDay, intervalMinutes } = account;
   const [sh, sm] = startTime.split(':').map(Number);
   const lastScheduled = getLastScheduledTime(accountId);
+  const totalSlots = videoFiles.length * numCycles;
   const scheduledDates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, lastScheduled);
 
-  // PASSO 1: Upload sequencial — um arquivo por vez, deleta após upload
   const uploaded = [];
   for (let i = 0; i < videoFiles.length; i++) {
     const file = videoFiles[i];
+    uploadProgress.set(jobId, {
+      ...uploadProgress.get(jobId),
+      done: i, currentFile: file.originalname,
+      pct: Math.round(i / videoFiles.length * 100)
+    });
     try {
       console.log(`[Upload] ${file.originalname} → B2... (${i+1}/${videoFiles.length})`);
       const result = await b2.uploadFile(file.path, file.originalname, account.username);
@@ -182,16 +239,15 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
     } catch(e) {
       console.error(`[Upload] ❌ ${file.originalname}: ${e.message}`);
       uploaded.push({ originalname: file.originalname, error: e.message });
+      uploadProgress.set(jobId, { ...uploadProgress.get(jobId), errors: (uploadProgress.get(jobId).errors || 0) + 1 });
     } finally {
       fs.unlink(file.path, () => {});
     }
   }
 
-  // PASSO 2: Cria registros no banco reutilizando a URL do B2 para cada ciclo
   let slot = 0;
   for (let cycle = 1; cycle <= numCycles; cycle++) {
-    for (let i = 0; i < uploaded.length; i++) {
-      const u = uploaded[i];
+    for (const u of uploaded) {
       if (u.error) { slot++; continue; }
       const scheduledFor = scheduledDates[slot++];
       try {
@@ -203,7 +259,22 @@ router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
 
   const ok = uploaded.filter(u => !u.error).length;
   db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + (ok * numCycles) });
-  console.log(`[Upload] ✅ ${ok}/${videoFiles.length} arquivos × ${numCycles} ciclo(s) = ${ok * numCycles} posts agendados`);
+
+  uploadProgress.set(jobId, {
+    ...uploadProgress.get(jobId),
+    done: videoFiles.length, pct: 100,
+    status: 'done', currentFile: '', ok,
+    errors: videoFiles.length - ok
+  });
+
+  setTimeout(() => uploadProgress.delete(jobId), 10 * 60 * 1000);
+  console.log(`[Upload] ✅ ${ok}/${videoFiles.length} × ${numCycles} = ${ok * numCycles} agendados`);
+}
+
+router.get('/upload-progress/:jobId', (req, res) => {
+  const p = uploadProgress.get(req.params.jobId);
+  if (!p) return res.json({ status: 'not_found' });
+  res.json({ found: true, ...p });
 });
 
 router.delete('/videos/:id', async (req, res) => {
