@@ -546,20 +546,56 @@ function startUpload(files){
   runUpload(qid,files,params,acc);
 }
 
-async function runUpload(qid,files,params,acc){
+function runUpload(qid,files,params,acc){
   const total=files.length;
-  updateQueue(qid,0,total,'Enviando '+total+' vídeo(s) para B2...');
-  try{
-    const fd=new FormData();
-    files.forEach(f=>fd.append('videos',f));
-    Object.entries(params).forEach(([k,v])=>fd.append(k,v));
-    const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(r=>r.json());
-    if(r.error){updateQueue(qid,0,total,'Erro: '+r.error,'error');toast('Erro: '+r.error,'er');return;}
-    updateQueue(qid,total,total,total+' vídeo(s) agendados! ✓','done');
-    toast('✅ @'+(acc.username||acc.label)+': '+total+' vídeo(s) agendados!','ok');
-    if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
-  }catch(e){updateQueue(qid,0,total,'Erro: '+e.message,'error');toast('Erro de rede','er');}
-  setTimeout(()=>removeFromQueue(qid),30000);
+  updateQueue(qid,0,total,'Preparando envio...');
+  const fd=new FormData();
+  files.forEach(f=>fd.append('videos',f));
+  Object.entries(params).forEach(([k,v])=>fd.append(k,v));
+
+  const xhr=new XMLHttpRequest();
+
+  // Progresso real do envio (upload pro servidor)
+  xhr.upload.onprogress=function(e){
+    if(!e.lengthComputable)return;
+    const pct=Math.round(e.loaded/e.total*100);
+    const mb=(e.loaded/1024/1024).toFixed(1);
+    const mbTotal=(e.total/1024/1024).toFixed(1);
+    updateQueue(qid,pct,100,'Enviando... '+mb+'MB / '+mbTotal+'MB ('+pct+'%)');
+  };
+
+  xhr.upload.onloadstart=function(){
+    updateQueue(qid,0,100,'Iniciando envio...');
+  };
+
+  xhr.upload.onload=function(){
+    updateQueue(qid,99,100,'Processando no servidor...');
+  };
+
+  xhr.onload=function(){
+    try{
+      const r=JSON.parse(xhr.responseText);
+      if(r.error){updateQueue(qid,0,100,'Erro: '+r.error,'error');toast('Erro: '+r.error,'er');return;}
+      updateQueue(qid,100,100,total+' vídeo(s) agendados! ✓','done');
+      toast('✅ @'+(acc.username||acc.label)+': '+total+' vídeo(s) agendados!','ok');
+      if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
+    }catch(e){updateQueue(qid,0,100,'Erro ao processar resposta','error');}
+    setTimeout(()=>removeFromQueue(qid),30000);
+  };
+
+  xhr.onerror=function(){
+    updateQueue(qid,0,100,'Erro de rede','error');
+    toast('Erro de rede no upload','er');
+  };
+
+  xhr.ontimeout=function(){
+    updateQueue(qid,0,100,'Timeout — tente com menos arquivos por vez','error');
+    toast('Timeout no upload','er');
+  };
+
+  xhr.timeout=30*60*1000; // 30 minutos
+  xhr.open('POST','/api/videos/upload');
+  xhr.send(fd);
 }
 
 // ── DASHBOARD ─────────────────────────────────────────
