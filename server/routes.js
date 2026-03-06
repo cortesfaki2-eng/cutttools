@@ -166,12 +166,22 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
     ig.scheduleVideo(video.id);
     slotInDay++;
     if (slotInDay >= ppd) {
+      // Atingiu limite do dia — pula pro dia seguinte
       slotInDay = 0;
       current = new Date(current);
       current.setDate(current.getDate() + 1);
       current.setHours(sh, sm, 0, 0);
     } else {
       current = new Date(current.getTime() + intervalMins * 60000);
+      // Se passou do fim da janela — pula pro dia seguinte
+      const endOfDay = new Date(current);
+      endOfDay.setHours(eh, em, 0, 0);
+      if (current > endOfDay) {
+        slotInDay = 0;
+        current = new Date(current);
+        current.setDate(current.getDate() + 1);
+        current.setHours(sh, sm, 0, 0);
+      }
     }
   }
 
