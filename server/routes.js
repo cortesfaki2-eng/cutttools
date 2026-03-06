@@ -260,23 +260,22 @@ router.get('/videos/presign', async (req, res) => {
 
 // 2) Browser avisa que terminou — servidor registra no banco
 router.post('/videos/confirm', async (req, res) => {
-  const { accountId, key, publicFileUrl, originalName, bytes, caption, hashtags, batchName, cycles, isLastOfBatch } = req.body;
+  const { accountId, key, publicFileUrl, originalName, bytes, caption, hashtags, batchName, cycles, isLastOfBatch, batchId, batchTotal } = req.body;
   if (!accountId || !key) return res.status(400).json({ error: 'accountId e key obrigatórios' });
   const account = db.getAccountById(accountId);
   if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
 
   try {
-    const numCycles = isLastOfBatch ? Math.max(1, parseInt(cycles) || 1) : 1;
+    const numCycles = Math.max(1, parseInt(cycles) || 1);
     const { startTime, endTime, postsPerDay, intervalMinutes } = account;
     const [sh, sm] = startTime.split(':').map(Number);
     const [eh, em] = (endTime||'23:00').split(':').map(Number);
 
     await withScheduleLock(accountId, async () => {
-      const lastScheduled = getLastScheduledTime(accountId);
-      const dates = generateSchedule(1 * numCycles, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled);
-      let slot = 0;
-      for (let cycle = 1; cycle <= numCycles; cycle++) {
-        const scheduledFor = dates[slot++];
+      if (!isLastOfBatch || numCycles <= 1) {
+        // Caso normal: agenda 1 slot para este vídeo
+        const lastScheduled = getLastScheduledTime(accountId);
+        const dates = generateSchedule(1, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled);
         const video = db.insertVideo({
           id: uuid(), accountId, username: account.username,
           originalName: originalName || key,
@@ -284,11 +283,49 @@ router.post('/videos/confirm', async (req, res) => {
           b2Url: publicFileUrl, b2FileId: key, b2FileName: key,
           bytes: parseInt(bytes) || 0, duration: 0,
           caption: caption || '', hashtags: hashtags || '',
-          cycle, scheduledFor: scheduledFor.toISOString(), status: 'pendente'
+          cycle: 1, scheduledFor: dates[0].toISOString(), status: 'pendente'
         });
         ig.scheduleVideo(video.id);
+        db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + 1 });
+      } else {
+        // Último arquivo com ciclos > 1:
+        // 1) Agenda o próprio vídeo no ciclo 1
+        const lastScheduled = getLastScheduledTime(accountId);
+        const dates1 = generateSchedule(1, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled);
+        const video = db.insertVideo({
+          id: uuid(), accountId, username: account.username,
+          originalName: originalName || key,
+          batchName: batchName || originalName || key,
+          b2Url: publicFileUrl, b2FileId: key, b2FileName: key,
+          bytes: parseInt(bytes) || 0, duration: 0,
+          caption: caption || '', hashtags: hashtags || '',
+          cycle: 1, scheduledFor: dates1[0].toISOString(), status: 'pendente'
+        });
+        ig.scheduleVideo(video.id);
+
+        // 2) Busca todos os vídeos do batch (batchName) e duplica para ciclos 2..N
+        const batchVideos = db.getVideos({ accountId, status: 'pendente', limit: 99999 })
+          .filter(v => v.batchName === (batchName || originalName || key) || (batchId && v.batchName === batchId));
+
+        for (let cycle = 2; cycle <= numCycles; cycle++) {
+          for (const bv of batchVideos) {
+            const lastSched = getLastScheduledTime(accountId);
+            const dates = generateSchedule(1, postsPerDay, intervalMinutes, sh, sm, eh, em, lastSched);
+            const dup = db.insertVideo({
+              id: uuid(), accountId, username: account.username,
+              originalName: bv.originalName,
+              batchName: bv.batchName,
+              b2Url: bv.b2Url, b2FileId: bv.b2FileId, b2FileName: bv.b2FileName,
+              bytes: bv.bytes, duration: 0,
+              caption: bv.caption, hashtags: bv.hashtags,
+              cycle, scheduledFor: dates[0].toISOString(), status: 'pendente'
+            });
+            ig.scheduleVideo(dup.id);
+          }
+        }
+        db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + (batchVideos.length * numCycles) });
+        console.log(`[Confirm] Ciclos: ${batchVideos.length} vídeos × ${numCycles} ciclos = ${batchVideos.length * numCycles} agendados`);
       }
-      db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + numCycles });
     });
 
     res.json({ success: true });
