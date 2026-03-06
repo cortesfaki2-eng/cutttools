@@ -236,6 +236,68 @@ router.get('/videos', (req, res) => {
   res.json({ videos, counts });
 });
 
+
+// ── UPLOAD DIRETO (presigned) ─────────────────────────
+// 1) Browser pede URL pré-assinada
+router.get('/videos/presign', async (req, res) => {
+  const { filename, accountId, contentType } = req.query;
+  if (!accountId || !filename) return res.status(400).json({ error: 'accountId e filename obrigatórios' });
+  const account = db.getAccountById(accountId);
+  if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
+  configureB2FromDB();
+  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
+
+  try {
+    const ext = require('path').extname(filename);
+    const base = require('path').basename(filename, ext).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const key = `${account.username}/${Date.now()}_${base}${ext}`;
+    const { uploadUrl, publicFileUrl } = await b2.getPresignedUploadUrl(key, contentType || 'video/mp4');
+    res.json({ uploadUrl, publicFileUrl, key });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 2) Browser avisa que terminou — servidor registra no banco
+router.post('/videos/confirm', async (req, res) => {
+  const { accountId, key, publicFileUrl, originalName, bytes, caption, hashtags, batchName, cycles, isLastOfBatch } = req.body;
+  if (!accountId || !key) return res.status(400).json({ error: 'accountId e key obrigatórios' });
+  const account = db.getAccountById(accountId);
+  if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
+
+  try {
+    const numCycles = isLastOfBatch ? Math.max(1, parseInt(cycles) || 1) : 1;
+    const { startTime, endTime, postsPerDay, intervalMinutes } = account;
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = (endTime||'23:00').split(':').map(Number);
+
+    await withScheduleLock(accountId, async () => {
+      const lastScheduled = getLastScheduledTime(accountId);
+      const dates = generateSchedule(1 * numCycles, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled);
+      let slot = 0;
+      for (let cycle = 1; cycle <= numCycles; cycle++) {
+        const scheduledFor = dates[slot++];
+        const video = db.insertVideo({
+          id: uuid(), accountId, username: account.username,
+          originalName: originalName || key,
+          batchName: batchName || originalName || key,
+          b2Url: publicFileUrl, b2FileId: key, b2FileName: key,
+          bytes: parseInt(bytes) || 0, duration: 0,
+          caption: caption || '', hashtags: hashtags || '',
+          cycle, scheduledFor: scheduledFor.toISOString(), status: 'pendente'
+        });
+        ig.scheduleVideo(video.id);
+      }
+      db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + numCycles });
+    });
+
+    res.json({ success: true });
+  } catch(e) {
+    console.error('[Confirm]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Rota de upload usando busboy para streaming — responde imediatamente após receber os arquivos
 router.post('/videos/upload', (req, res) => {
   configureB2FromDB();
