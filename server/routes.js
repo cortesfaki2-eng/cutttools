@@ -15,6 +15,16 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 // Mapa de progresso dos uploads em andamento
 const uploadProgress = new Map();
 
+// Converte hora local (string "HH:MM") para Date UTC considerando offset do servidor
+// O servidor roda em UTC — ajusta os horários salvos no banco (que estão em hora local do usuário)
+function localTimeToUTC(dateBase, h, m) {
+  // Pega o offset do banco de configurações (padrão -3 para Brasil)
+  const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
+  const d = new Date(dateBase);
+  d.setUTCHours(h - offsetHours, m, 0, 0);
+  return d;
+}
+
 function configureB2FromDB() {
   const s = db.getAllSettings();
   if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
@@ -35,14 +45,13 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
   const now = new Date();
   let current;
 
+  const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
   if (lastScheduled && lastScheduled > now) {
-    // Continua depois do último agendado
     current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
   } else {
-    // Começa agora + 1 minuto
     current = new Date(now.getTime() + 60000);
-    const todayStart = new Date(now); todayStart.setHours(startH, startM, 0, 0);
-    const todayEnd = new Date(now); todayEnd.setHours(endH, endM, 0, 0);
+    const todayStart = new Date(now); todayStart.setUTCHours(startH - offsetHours, startM, 0, 0);
+    const todayEnd = new Date(now); todayEnd.setUTCHours(endH - offsetHours, endM, 0, 0);
     if (current < todayStart) {
       current = todayStart;
     } else if (current > todayEnd) {
@@ -57,18 +66,18 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
     slotInDay++;
     if (slotInDay >= postsPerDay) {
       slotInDay = 0;
-      current = new Date(current);
-      current.setDate(current.getDate() + 1);
-      current.setHours(startH, startM, 0, 0);
+      const dd = new Date(current);
+      dd.setDate(dd.getDate() + 1);
+      current = new Date(dd); current.setUTCHours(startH - offsetHours, startM, 0, 0);
     } else {
       const next = new Date(current.getTime() + intervalMinutes * 60000);
       const nextMins = next.getHours() * 60 + next.getMinutes();
       const endMins = endH * 60 + endM;
       if (nextMins >= endMins) {
         slotInDay = 0;
-        current = new Date(next);
-        current.setDate(current.getDate() + 1);
-        current.setHours(startH, startM, 0, 0);
+        const dd2 = new Date(next);
+        dd2.setDate(dd2.getDate() + 1);
+        current = new Date(dd2); current.setUTCHours(startH - offsetHours, startM, 0, 0);
       } else {
         current = next;
       }
@@ -80,7 +89,7 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
 // ── SETTINGS ──────────────────────────────────────────
 router.get('/settings', (req, res) => {
   const s = db.getAllSettings();
-  res.json({ b2KeyId: s.b2KeyId||'', b2AppKey: s.b2AppKey?'***'+s.b2AppKey.slice(-4):'', b2Bucket: s.b2Bucket||'', b2Endpoint: s.b2Endpoint||'', b2PublicUrl: s.b2PublicUrl||'' });
+  res.json({ b2KeyId: s.b2KeyId||'', b2AppKey: s.b2AppKey?'***'+s.b2AppKey.slice(-4):'', b2Bucket: s.b2Bucket||'', b2Endpoint: s.b2Endpoint||'', b2PublicUrl: s.b2PublicUrl||'', timezoneOffset: s.timezoneOffset||'-3' });
 });
 
 router.post('/settings', (req, res) => {
@@ -90,6 +99,7 @@ router.post('/settings', (req, res) => {
   if (b2Bucket) db.setSetting('b2Bucket', b2Bucket);
   if (b2Endpoint) db.setSetting('b2Endpoint', b2Endpoint);
   if (b2PublicUrl !== undefined) db.setSetting('b2PublicUrl', b2PublicUrl);
+  if (req.body.timezoneOffset !== undefined) db.setSetting('timezoneOffset', req.body.timezoneOffset);
   configureB2FromDB();
   res.json({ success: true });
 });
@@ -156,12 +166,12 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
   // Cancela jobs atuais
   pending.forEach(v => ig.cancelJob(v.id));
 
-  // Reagenda a partir de amanha inicio da janela
+  // Reagenda a partir de amanha inicio da janela (compensando UTC)
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(sh, sm, 0, 0);
+  const tomorrowStart = localTimeToUTC(tomorrow, sh, sm);
 
-  let current = new Date(tomorrow);
+  let current = new Date(tomorrowStart);
   let slotInDay = 0;
 
   function nextSlot(c) {
@@ -171,8 +181,7 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
     if (nextMins >= endMins) {
       const d = new Date(next);
       d.setDate(d.getDate() + 1);
-      d.setHours(sh, sm, 0, 0);
-      return { date: d, resetSlot: true };
+      return { date: localTimeToUTC(d, sh, sm), resetSlot: true };
     }
     return { date: next, resetSlot: false };
   }
@@ -185,8 +194,7 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
       slotInDay = 0;
       const d = new Date(current);
       d.setDate(d.getDate() + 1);
-      d.setHours(sh, sm, 0, 0);
-      current = d;
+      current = localTimeToUTC(d, sh, sm);
     } else {
       const { date, resetSlot } = nextSlot(current);
       if (resetSlot) slotInDay = 0;
