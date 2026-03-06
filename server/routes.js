@@ -161,27 +161,35 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
   let current = new Date(tomorrow);
   let slotInDay = 0;
 
+  function nextSlot(c) {
+    const next = new Date(c.getTime() + intervalMins * 60000);
+    // Verifica se passou do fim da janela neste mesmo dia
+    const endToday = new Date(next);
+    endToday.setHours(eh, em, 0, 0);
+    if (next > endToday) {
+      // Pula pro inicio da janela do dia seguinte
+      const d = new Date(next);
+      d.setDate(d.getDate() + 1);
+      d.setHours(sh, sm, 0, 0);
+      slotInDay = 0;
+      return d;
+    }
+    return next;
+  }
+
   for (const video of pending) {
     db.updateVideo(video.id, { scheduledFor: current.toISOString(), status: 'pendente', errorMsg: null });
     ig.scheduleVideo(video.id);
     slotInDay++;
     if (slotInDay >= ppd) {
-      // Atingiu limite do dia — pula pro dia seguinte
+      // Atingiu limite diario — pula pro dia seguinte
       slotInDay = 0;
-      current = new Date(current);
-      current.setDate(current.getDate() + 1);
-      current.setHours(sh, sm, 0, 0);
+      const d = new Date(current);
+      d.setDate(d.getDate() + 1);
+      d.setHours(sh, sm, 0, 0);
+      current = d;
     } else {
-      current = new Date(current.getTime() + intervalMins * 60000);
-      // Se passou do fim da janela — pula pro dia seguinte
-      const endOfDay = new Date(current);
-      endOfDay.setHours(eh, em, 0, 0);
-      if (current > endOfDay) {
-        slotInDay = 0;
-        current = new Date(current);
-        current.setDate(current.getDate() + 1);
-        current.setHours(sh, sm, 0, 0);
-      }
+      current = nextSlot(current);
     }
   }
 
