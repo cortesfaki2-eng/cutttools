@@ -191,7 +191,8 @@ router.post('/videos/upload', (req, res) => {
       return;
     }
 
-    const numCycles = Math.max(1, parseInt(cycles) || 1);
+    const isLastOfBatch = fields.isLastOfBatch === 'true';
+    const numCycles = isLastOfBatch ? Math.max(1, parseInt(cycles) || 1) : 1;
     const jobId = uuid();
 
     uploadProgress.set(jobId, {
