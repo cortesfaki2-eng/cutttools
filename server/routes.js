@@ -42,6 +42,8 @@ function configureB2FromDB() {
     b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
   }
 }
+// Configura B2 uma vez na inicialização
+configureB2FromDB();
 
 function getLastScheduledTime(accountId) {
   const all = db.getVideos({ accountId, limit: 99999 });
@@ -244,7 +246,6 @@ router.get('/videos/presign', async (req, res) => {
   if (!accountId || !filename) return res.status(400).json({ error: 'accountId e filename obrigatórios' });
   const account = db.getAccountById(accountId);
   if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
-  configureB2FromDB();
   if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
 
   try {
@@ -337,7 +338,6 @@ router.post('/videos/confirm', async (req, res) => {
 
 // Rota de upload usando busboy para streaming — responde imediatamente após receber os arquivos
 router.post('/videos/upload', (req, res) => {
-  configureB2FromDB();
   if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
 
   const fields = {};
