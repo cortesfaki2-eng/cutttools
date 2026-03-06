@@ -573,6 +573,8 @@ vfi.addEventListener('change',e=>startUpload([...e.target.files]));
 
 function startUpload(files){
   if(!files.length)return;
+  // Ordena por nome para garantir sequência correta
+  files=Array.from(files).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
   const accId=document.getElementById('up-acc').value;
   const acc=accounts.find(a=>a.id===accId);
   if(!accId||!acc){toast('Selecione uma conta','er');return;}
@@ -631,10 +633,9 @@ async function runUpload(qid,files,params,acc){
     }
   }
 
-  // Processa em lotes de PARALLEL simultâneos
-  for(let i=0;i<files.length;i+=PARALLEL){
-    const lote=Array.from({length:Math.min(PARALLEL,files.length-i)},(_,j)=>uploadOne(files[i+j],i+j));
-    await Promise.all(lote);
+  // Envia sequencialmente para garantir ordem correta dos agendamentos
+  for(let i=0;i<files.length;i++){
+    await uploadOne(files[i],i);
     updateQueue(qid,Math.round(done/total*100),100,done+'/'+total+' vídeo(s) enviados ✓');
   }
 
