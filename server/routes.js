@@ -157,7 +157,7 @@ router.put('/accounts/:id', (req, res) => {
 
 
 router.post('/accounts/:id/reschedule', async (req, res) => {
-  const { label, postsPerDay, startTime, endTime } = req.body;
+  const { label, postsPerDay, startTime, endTime, accessToken } = req.body;
   const acc = db.getAccountById(req.params.id);
   if (!acc) return res.status(404).json({ error: 'Conta nao encontrada' });
 
@@ -170,7 +170,9 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
   const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
 
   // Atualiza dados da conta
-  db.updateAccount(req.params.id, { label: label || acc.label, postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins });
+  const patch = { label: label || acc.label, postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins };
+  if (accessToken) { patch.accessToken = accessToken; console.log('[EditAccount] Token atualizado para', acc.username); }
+  db.updateAccount(req.params.id, patch);
 
   // Busca todos os pendentes desta conta
   const pending = db.getVideos({ accountId: req.params.id, status: 'pendente', limit: 99999 });
