@@ -29,16 +29,25 @@ function getLastScheduledTime(accountId) {
   return new Date(sorted[0].scheduledFor);
 }
 
-function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, lastScheduled = null) {
+function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, endH, endM, lastScheduled = null) {
   const dates = [];
+  const now = new Date();
   let current;
-  if (lastScheduled && lastScheduled > new Date()) {
+
+  if (lastScheduled && lastScheduled > now) {
     current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
   } else {
-    current = new Date();
-    current.setHours(startH, startM, 0, 0);
-    if (current <= new Date()) current.setDate(current.getDate() + 1);
+    current = new Date(now.getTime() + 60000);
+    const todayStart = new Date(now); todayStart.setHours(startH, startM, 0, 0);
+    const todayEnd = new Date(now); todayEnd.setHours(endH, endM, 0, 0);
+    if (current < todayStart) {
+      current = todayStart;
+    } else if (current > todayEnd) {
+      current = new Date(todayStart);
+      current.setDate(current.getDate() + 1);
+    }
   }
+
   let slotInDay = 0;
   for (let i = 0; i < total; i++) {
     dates.push(new Date(current));
@@ -50,9 +59,17 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, l
       current.setHours(startH, startM, 0, 0);
     } else {
       current = new Date(current.getTime() + intervalMinutes * 60000);
+      const endOfDay = new Date(current); endOfDay.setHours(endH, endM, 0, 0);
+      if (current > endOfDay) {
+        slotInDay = 0;
+        current = new Date(current);
+        current.setDate(current.getDate() + 1);
+        current.setHours(startH, startM, 0, 0);
+      }
     }
   }
   return dates;
+}
 }
 
 router.get('/settings', (req, res) => {
@@ -219,12 +236,13 @@ router.post('/videos/upload', (req, res) => {
 });
 
 async function processUpload(jobId, videoFiles, account, accountId, caption, hashtags, batchName, numCycles) {
-  const { startTime, postsPerDay, intervalMinutes } = account;
+  const { startTime, endTime, postsPerDay, intervalMinutes } = account;
   const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = (endTime||'23:00').split(':').map(Number);
   const lastScheduled = getLastScheduledTime(accountId);
   const totalSlots = videoFiles.length * numCycles;
-  const scheduledDates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, lastScheduled);
-
+  const scheduledDates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled);
+  
   const uploaded = [];
   for (let i = 0; i < videoFiles.length; i++) {
     const file = videoFiles[i];
