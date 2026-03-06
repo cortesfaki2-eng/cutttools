@@ -30,7 +30,8 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .nav-item:hover{background:var(--s2);color:var(--tx)}
 .nav-item.act{background:var(--p3);color:var(--p2)}
 .nav-item .icon{width:18px;text-align:center;font-size:14px;flex-shrink:0}
-.sb-queue{border-top:1px solid var(--b1);padding:10px 8px}
+.nav-badge{margin-left:auto;background:var(--rd);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:100px;min-width:18px;text-align:center;display:none}
+.sb-queue{border-top:1px solid var(--b1);padding:10px 8px;display:none}
 .sb-queue-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);padding:0 10px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
 .sb-queue-title span{color:var(--p2);font-size:11px;font-weight:700}
 .queue-item{background:var(--s2);border:1px solid var(--b1);border-radius:8px;padding:10px 11px;margin-bottom:6px;position:relative}
@@ -48,6 +49,7 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .sb-acc-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:7px;cursor:pointer;transition:background .15s}
 .sb-acc-item:hover{background:var(--s2)}
 .sb-acc-av{width:24px;height:24px;border-radius:50%;background:var(--p);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.sb-acc-av.err{background:var(--rd)}
 .sb-acc-name{font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-acc-handle{font-size:10px;color:var(--tx3)}
 .main{margin-left:var(--sidebar);flex:1;display:flex;flex-direction:column;min-height:100vh}
@@ -57,24 +59,46 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .page-content{padding:20px 24px;flex:1}
 .panel{display:none}.panel.act{display:block}
 .card{background:var(--s1);border:1px solid var(--b1);border-radius:12px;padding:18px;margin-bottom:14px}
-.card-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);margin-bottom:14px}
+.card-title{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .stat-grid{display:grid;gap:10px;margin-bottom:12px}
 .stat-grid.c4{grid-template-columns:repeat(4,1fr)}.stat-grid.c3{grid-template-columns:repeat(3,1fr)}
 .stat-box{background:var(--s1);border:1px solid var(--b1);border-radius:10px;padding:14px 16px}
 .stat-num{font-size:24px;font-weight:700;line-height:1;margin-bottom:2px}
 .stat-lbl{font-size:10px;color:var(--tx3)}
 .c-p{color:var(--p2)}.c-g{color:var(--gr)}.c-y{color:var(--ye)}.c-r{color:var(--rd)}.c-b{color:var(--bl)}
-.acc-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+/* Account performance table */
+.acc-table{width:100%;border-collapse:collapse}
+.acc-table th{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--tx3);font-weight:600;padding:8px 12px;text-align:left;border-bottom:1px solid var(--b1);white-space:nowrap}
+.acc-table td{padding:9px 12px;border-bottom:1px solid var(--b1);font-size:12px;vertical-align:middle}
+.acc-table tr:last-child td{border-bottom:none}
+.acc-table tbody tr:hover td{background:var(--s2)}
+.prog-bar{height:5px;background:var(--b1);border-radius:100px;overflow:hidden;margin-top:4px;width:100px}
+.prog-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,var(--p),var(--p2))}
+.prog-fill.ok{background:linear-gradient(90deg,var(--gr),#16a34a)}
+.prog-fill.warn{background:linear-gradient(90deg,var(--ye),#ca8a04)}
+/* Problems */
+.prob-item{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;background:var(--s1);border:1px solid rgba(239,68,68,.3);border-radius:10px;margin-bottom:8px}
+.prob-icon{font-size:20px;flex-shrink:0}
+.prob-body{flex:1;min-width:0}
+.prob-acc{font-size:13px;font-weight:700;color:var(--rd);margin-bottom:4px}
+.prob-msg{font-size:11px;color:var(--tx2);line-height:1.6}
+.prob-files{margin-top:7px;display:flex;flex-wrap:wrap;gap:4px}
+.prob-file-tag{background:var(--s2);padding:2px 8px;border-radius:4px;font-size:10px;color:var(--tx3)}
+.prob-actions{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+/* Accounts grid */
+.acc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .acc-card{background:var(--s1);border:1px solid var(--b1);border-radius:12px;padding:16px}
+.acc-card.has-error{border-color:rgba(239,68,68,.4)}
 .acc-card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
 .acc-card-left{display:flex;align-items:center;gap:10px}
 .acc-avatar{width:38px;height:38px;border-radius:50%;background:var(--p3);border:2px solid var(--p);display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+.acc-avatar.err{border-color:var(--rd)}
 .acc-username{font-size:13px;font-weight:700;margin-bottom:2px}
 .acc-badge{display:inline-flex;align-items:center;font-size:10px;font-weight:600;padding:2px 7px;border-radius:100px}
 .acc-badge.custom{background:var(--s3);color:var(--tx2);border:1px solid var(--b2)}
 .acc-badge.intel{background:var(--gr2);color:var(--gr)}
-.acc-id{font-size:9px;color:var(--tx3);margin-top:2px;font-family:monospace}
-.acc-status{font-size:10px;color:var(--gr);font-weight:500}
+.acc-status{font-size:10px;color:var(--gr);font-weight:500;margin-top:2px}
+.acc-status.err{color:var(--rd)}
 .acc-card-actions{display:flex;gap:5px}
 .acc-card-actions button{background:none;border:none;color:var(--tx3);cursor:pointer;padding:4px;border-radius:5px;font-size:13px;transition:color .15s}
 .acc-card-actions button:hover{color:var(--tx)}.acc-card-actions button.del:hover{color:var(--rd)}
@@ -82,6 +106,8 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .acc-info-row:last-child{border-bottom:none}
 .acc-info-lbl{font-size:11px;color:var(--tx2)}
 .acc-info-val{font-size:11px;font-weight:600;color:var(--p2)}
+.acc-info-val.err{color:var(--rd)}
+/* Videos */
 .videos-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .filter-tabs{display:flex;gap:3px;background:var(--s1);border:1px solid var(--b1);border-radius:8px;padding:3px}
 .tab{padding:5px 11px;border-radius:6px;border:none;background:none;color:var(--tx2);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap}
@@ -97,6 +123,7 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .video-actions{display:flex;gap:4px}
 .icon-btn{background:none;border:1px solid var(--b1);color:var(--tx3);cursor:pointer;width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;transition:all .15s}
 .icon-btn:hover{border-color:var(--b2);color:var(--tx)}.icon-btn.danger:hover{background:var(--rd2);border-color:var(--rd);color:var(--rd)}
+/* Forms */
 .field{margin-bottom:12px}.field:last-child{margin-bottom:0}
 label{display:block;font-size:12px;font-weight:600;color:var(--tx2);margin-bottom:5px}
 input,textarea,select{width:100%;background:var(--s2);border:1px solid var(--b1);border-radius:8px;padding:8px 11px;color:var(--tx);font-family:'Inter',sans-serif;font-size:13px;outline:none;transition:border-color .15s}
@@ -104,20 +131,20 @@ input:focus,textarea:focus,select:focus{border-color:var(--p)}
 select option{background:var(--s2)}
 textarea{resize:vertical;min-height:60px;line-height:1.5}
 .r2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.r3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .hint{font-size:11px;color:var(--tx3);margin-top:3px;line-height:1.4}
-.hint a,.hint-link{color:var(--p2)}
+.hint a{color:var(--p2)}
+/* Modal */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(3px);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
 .modal-bg.open{display:flex}
 .modal{background:var(--s1);border:1px solid var(--b1);border-radius:14px;padding:22px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;position:relative}
 .modal h3{font-size:16px;font-weight:700;margin-bottom:16px}
 .modal-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--tx3);font-size:17px;cursor:pointer}
 .modal-close:hover{color:var(--tx)}
-.upload-modal{max-width:540px}
-.drop-area{border:2px dashed var(--b2);border-radius:10px;padding:32px 20px;text-align:center;cursor:pointer;transition:all .2s;background:var(--bg)}
+.upload-modal{max-width:560px}
+.drop-area{border:2px dashed var(--b2);border-radius:10px;padding:28px 20px;text-align:center;cursor:pointer;transition:all .2s;background:var(--bg)}
 .drop-area:hover,.drop-area.over{border-color:var(--p);background:rgba(108,99,255,.05)}
-.drop-area .drop-icon{font-size:34px;margin-bottom:9px}
-.drop-area h4{font-size:14px;font-weight:600;margin-bottom:3px}
+.drop-area .drop-icon{font-size:32px;margin-bottom:8px}
+.drop-area h4{font-size:13px;font-weight:600;margin-bottom:3px}
 .drop-area p{font-size:11px;color:var(--tx3)}
 .drop-area .link{color:var(--p2);text-decoration:underline}
 #videoFileInput{display:none}
@@ -126,11 +153,13 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .mode-opt.sel{border-color:var(--p);background:var(--p3)}
 .mode-opt h5{font-size:12px;font-weight:600;margin-bottom:2px}
 .mode-opt p{font-size:10px;color:var(--tx3)}
+/* Buttons */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;border:none;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
 .btn-p{background:var(--p);color:#fff}.btn-p:hover{background:var(--p2)}
 .btn-g{background:transparent;color:var(--tx2);border:1px solid var(--b1)}.btn-g:hover{color:var(--tx)}
 .btn-d{background:var(--rd2);color:var(--rd);border:1px solid rgba(239,68,68,.3)}.btn-d:hover{background:rgba(239,68,68,.25)}
-.btn-sm{padding:6px 11px;font-size:12px}
+.btn-gr{background:var(--gr2);color:var(--gr);border:1px solid rgba(34,197,94,.3)}.btn-gr:hover{background:rgba(34,197,94,.25)}
+.btn-sm{padding:5px 11px;font-size:12px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 .badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:100px;font-size:10px;font-weight:600}
@@ -149,7 +178,7 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .info-box.gr{background:var(--gr2);border:1px solid rgba(34,197,94,.25);color:var(--gr)}
 .info-box.bl{background:var(--bl2);border:1px solid rgba(59,130,246,.25);color:var(--bl)}
 .info-box.ye{background:var(--ye2);border:1px solid rgba(234,179,8,.25);color:var(--ye)}
-@media(max-width:900px){.acc-grid{grid-template-columns:1fr 1fr}.stat-grid.c4{grid-template-columns:1fr 1fr}}
+.info-box.rd{background:var(--rd2);border:1px solid rgba(239,68,68,.25);color:var(--rd)}
 </style>
 </head>
 <body>
@@ -162,15 +191,15 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <h3>Adicionar Conta Instagram</h3>
     <div class="field">
       <label>Access Token</label>
-      <textarea id="aa-token" rows="3" placeholder="Token IGAAh... gerado em Facebook Developers → API setup with Instagram → Generate token"></textarea>
+      <textarea id="aa-token" rows="3" placeholder="Token IGAAh..."></textarea>
     </div>
     <div class="field">
       <label>Label (apelido opcional)</label>
       <input id="aa-label" placeholder="Ex: Futebol, Conta Principal...">
     </div>
     <div class="field">
-      <label>Vídeos por dia <span style="color:var(--tx3)">(máx 50)</span></label>
-      <input type="number" id="aa-ppd" value="40" min="1" max="50" oninput="updateIntervalPreview()">
+      <label>Vídeos por dia</label>
+      <input type="number" id="aa-ppd" value="40" min="1" max="100" oninput="updateIntervalPreview()">
     </div>
     <div class="r2">
       <div class="field"><label>Início da janela</label><input type="time" id="aa-st" value="02:00" oninput="updateIntervalPreview()"></div>
@@ -204,14 +233,21 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
       <input id="up-batch" placeholder="Ex: Vídeos de Janeiro">
     </div>
     <div class="r2">
-      <div class="field"><label>Legenda Padrão</label><textarea id="up-cap" placeholder="Legenda para todos os vídeos..."></textarea></div>
-      <div class="field"><label>Hashtags</label><textarea id="up-hash" placeholder="reels instagram viral fyp"></textarea><div class="hint">Com ou sem #</div></div>
+      <div class="field">
+        <label>Legenda <span id="preset-indicator" style="font-size:10px;color:var(--gr);display:none">✓ padrão</span></label>
+        <textarea id="up-cap" rows="3" placeholder="Legenda para todos os vídeos..."></textarea>
+      </div>
+      <div class="field">
+        <label>Hashtags <span id="preset-hash-indicator" style="font-size:10px;color:var(--gr);display:none">✓ padrão</span></label>
+        <textarea id="up-hash" rows="3" placeholder="reels instagram viral fyp"></textarea>
+        <div class="hint">Com ou sem #</div>
+      </div>
     </div>
     <div class="field">
-      <label>Número de Ciclos</label>
+      <label>Ciclos (repetições da playlist)</label>
       <select id="up-cycles">
-        <option value="1">1 ciclo (padrão)</option>
-        <option value="2">2 ciclos — 100 vídeos = 200 posts</option>
+        <option value="1">1 ciclo</option>
+        <option value="2">2 ciclos</option>
         <option value="3">3 ciclos</option>
         <option value="5">5 ciclos</option>
         <option value="10">10 ciclos</option>
@@ -219,7 +255,6 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <option value="50">50 ciclos</option>
         <option value="100">100 ciclos</option>
       </select>
-      <div class="hint">Ex: 100 vídeos × 2 ciclos = 200 posts agendados</div>
     </div>
     <div class="drop-area" id="dropArea" onclick="document.getElementById('videoFileInput').click()">
       <div class="drop-icon">⬆️</div>
@@ -227,12 +262,8 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
       <p>ou <span class="link">clique para selecionar</span> · MP4, MOV, AVI, MKV, ZIP</p>
     </div>
     <input type="file" id="videoFileInput" multiple accept="video/*,.zip">
-    <div class="info-box gr" style="margin-top:10px;margin-bottom:0">
-      ✅ O upload roda em background — feche este modal e inicie outros uploads normalmente. Acompanhe a fila na sidebar.
-    </div>
-    <div class="btn-row">
-      <button class="btn btn-g" onclick="closeModal('modalUpload')">Fechar</button>
-    </div>
+    <div class="info-box gr" style="margin-top:10px;margin-bottom:0">✅ Upload roda em background — pode fechar este modal.</div>
+    <div class="btn-row"><button class="btn btn-g" onclick="closeModal('modalUpload')">Fechar</button></div>
   </div>
 </div>
 
@@ -240,22 +271,22 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 <aside class="sidebar">
   <div class="sb-header">
     <div class="sb-logo"><div class="sb-logo-icon">✂️</div><div class="sb-logo-text">CutTools</div></div>
-    <div class="sb-sub">Automação de postagens · v4.0</div>
+    <div class="sb-sub">Automação de postagens · v5.0</div>
   </div>
   <nav class="sb-nav">
     <button class="nav-item act" id="n-dash" onclick="nav('dash')"><span class="icon">📊</span> Dashboard</button>
-    <button class="nav-item" id="n-accounts" onclick="nav('accounts')"><span class="icon">📱</span> Configurar contas</button>
-    <button class="nav-item" id="n-videos" onclick="nav('videos')"><span class="icon">🎬</span> Postar vídeos</button>
+    <button class="nav-item" id="n-accounts" onclick="nav('accounts')"><span class="icon">📱</span> Contas</button>
+    <button class="nav-item" id="n-videos" onclick="nav('videos')"><span class="icon">🎬</span> Vídeos</button>
+    <button class="nav-item" id="n-problems" onclick="nav('problems')">
+      <span class="icon">⚠️</span> Problemas
+      <span class="nav-badge" id="problemBadge">0</span>
+    </button>
     <button class="nav-item" id="n-settings" onclick="nav('settings')"><span class="icon">⚙️</span> Configurações</button>
   </nav>
-
-  <!-- UPLOAD QUEUE -->
-  <div class="sb-queue" id="sbQueue" style="display:none">
-    <div class="sb-queue-title">⬆ Uploads em andamento <span id="queueCount">0</span></div>
+  <div class="sb-queue" id="sbQueue">
+    <div class="sb-queue-title">⬆ Uploads <span id="queueCount"></span></div>
     <div id="queueList"></div>
   </div>
-
-  <!-- ACCOUNTS LIST -->
   <div class="sb-accounts">
     <div class="sb-accounts-title">Contas Instagram</div>
     <div id="sbAccsList"></div>
@@ -269,13 +300,13 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <div class="topbar-right">
       <span id="topbarDate" style="font-size:11px;color:var(--tx3)"></span>
       <button class="btn btn-p btn-sm" onclick="openUpload()">⬆ Upload de Vídeos</button>
-      <button class="btn btn-sm btn-g" onclick="refreshAll()">🔄</button>
+      <button class="btn btn-sm btn-g" onclick="refreshAll()" title="Atualizar">🔄</button>
     </div>
   </div>
 
   <div class="page-content">
 
-    <!-- DASHBOARD -->
+    <!-- ══ DASHBOARD ══ -->
     <div class="panel act" id="panel-dash">
       <div class="stat-grid c4">
         <div class="stat-box"><div class="stat-num c-p" id="ds-total">0</div><div class="stat-lbl">Total de vídeos</div></div>
@@ -285,23 +316,48 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
       </div>
       <div class="stat-grid c3">
         <div class="stat-box"><div class="stat-num c-p" id="ds-accs">0</div><div class="stat-lbl">Contas ativas</div></div>
-        <div class="stat-box"><div class="stat-num c-b" id="ds-proc">0</div><div class="stat-lbl">Jobs ativos agora</div></div>
+        <div class="stat-box"><div class="stat-num c-b" id="ds-jobs">0</div><div class="stat-lbl">Jobs ativos agora</div></div>
         <div class="stat-box"><div class="stat-num c-g" id="ds-today">0</div><div class="stat-lbl">Postados hoje</div></div>
       </div>
+
+      <!-- Tabela performance por conta -->
+      <div class="card">
+        <div class="card-title">
+          <span>📊 Performance por conta</span>
+          <input type="text" placeholder="🔍 Buscar..." oninput="filterDashTable(this.value)" style="width:180px;padding:4px 10px;font-size:12px;margin-bottom:0">
+        </div>
+        <div style="overflow-x:auto">
+          <table class="acc-table">
+            <thead>
+              <tr>
+                <th>Conta</th>
+                <th>Postados</th>
+                <th>Pendentes</th>
+                <th>Erros</th>
+                <th>Total</th>
+                <th style="min-width:130px">Progresso</th>
+                <th>Último post</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="dashAccBody"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="card"><div class="card-title">Próximas postagens</div><div id="dashNextList"></div></div>
     </div>
 
-    <!-- ACCOUNTS -->
+    <!-- ══ ACCOUNTS ══ -->
     <div class="panel" id="panel-accounts">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:8px;flex-wrap:wrap">
+        <input type="text" placeholder="🔍 Buscar conta..." oninput="filterAccCards(this.value)" style="max-width:240px">
         <button class="btn btn-p btn-sm" onclick="openModal('modalAddAcc')">➕ Adicionar conta</button>
       </div>
-      <div class="acc-grid" id="accGrid">
-        <div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta adicionada</p></div>
-      </div>
+      <div class="acc-grid" id="accGrid"></div>
     </div>
 
-    <!-- VIDEOS -->
+    <!-- ══ VIDEOS ══ -->
     <div class="panel" id="panel-videos">
       <div class="videos-toolbar">
         <div class="filter-tabs">
@@ -315,24 +371,54 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
           <option value="all">Todas as contas</option>
         </select>
         <input type="date" id="dateFilter" onchange="loadVideos()" style="width:145px">
-        <button class="btn btn-d btn-sm" onclick="cancelPending()" style="margin-left:auto">
+        <button class="btn btn-d btn-sm" style="margin-left:auto" onclick="cancelPending()">
           🗑 Cancelar Pendentes (<span id="pendCount">0</span>)
         </button>
       </div>
       <div id="videosList"></div>
     </div>
 
-    <!-- SETTINGS -->
-    <div class="panel" id="panel-settings">
-      <div class="card" style="max-width:620px">
-        <div class="card-title">🟠 Backblaze B2 — Storage de vídeos (~$1/mês para 180GB)</div>
-        <div class="info-box bl" style="margin-bottom:14px">
-          <strong>Como configurar:</strong><br>
-          1. Crie conta em <a href="https://backblaze.com" target="_blank" style="color:var(--bl)">backblaze.com</a> (gratuito até 10GB, depois $0,006/GB)<br>
-          2. <strong>Buckets → Create a Bucket</strong> → marque <strong>Public</strong> → Create Bucket<br>
-          3. <strong>App Keys → Add a New Application Key</strong> → copie keyID e applicationKey<br>
-          4. No bucket: clique em <strong>Endpoint</strong> para ver o endereço S3
+    <!-- ══ PROBLEMS ══ -->
+    <div class="panel" id="panel-problems">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:13px;color:var(--tx2)">Contas com falhas recentes de postagem</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-gr btn-sm" onclick="retryAllErrors()">↺ Retry todos</button>
+          <button class="btn btn-sm btn-g" onclick="loadProblems()">🔄 Atualizar</button>
         </div>
+      </div>
+      <div id="problemsList"></div>
+    </div>
+
+    <!-- ══ SETTINGS ══ -->
+    <div class="panel" id="panel-settings">
+
+      <!-- Legenda e hashtags padrão -->
+      <div class="card" style="max-width:700px">
+        <div class="card-title">✍️ Legenda e Hashtags Padrão</div>
+        <div class="info-box bl">
+          Defina uma legenda e hashtags que serão preenchidas automaticamente toda vez que você abrir o modal de upload. Você ainda pode editar antes de cada envio.
+        </div>
+        <div class="r2">
+          <div class="field">
+            <label>Legenda padrão</label>
+            <textarea id="def-cap" rows="5" placeholder="Ex: Siga para mais conteúdo! 🔥&#10;Ative o sininho 🔔"></textarea>
+          </div>
+          <div class="field">
+            <label>Hashtags padrão</label>
+            <textarea id="def-hash" rows="5" placeholder="reels instagram viral fyp futebol"></textarea>
+            <div class="hint">Com ou sem # — separadas por espaço ou linha</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <button class="btn btn-p btn-sm" onclick="saveDefaults()">💾 Salvar padrão</button>
+          <button class="btn btn-g btn-sm" onclick="clearDefaults()">✕ Limpar padrão</button>
+        </div>
+      </div>
+
+      <!-- B2 -->
+      <div class="card" style="max-width:700px">
+        <div class="card-title">🟠 Backblaze B2 — Storage</div>
         <div class="r2">
           <div class="field"><label>Key ID</label><input id="b2-kid" placeholder="003xxxxxxxxxxxxxxxxx0"></div>
           <div class="field"><label>Application Key</label><input type="password" id="b2-key" placeholder="K003xxxxxxxxxxxxx..."></div>
@@ -344,50 +430,33 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <div class="field">
           <label>URL Pública do Bucket</label>
           <input id="b2-pub" placeholder="https://f004.backblazeb2.com/file/meu-bucket-cuttools">
-          <div class="hint">No bucket → "Bucket Settings" → "Friendly URL". Formato: https://f00X.backblazeb2.com/file/NOME-DO-BUCKET</div>
         </div>
-        <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar configurações</button>
+        <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar configurações B2</button>
       </div>
 
-      <div class="card" style="max-width:620px">
-        <div class="card-title">☁️ Deploy no Railway — rodar sem PC ligado</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <div style="background:var(--bg);border:1px solid var(--b1);border-radius:8px;padding:12px">
-            <div style="font-size:12px;font-weight:700;color:var(--p2);margin-bottom:6px">💰 Custo mensal</div>
-            <div style="font-size:11px;color:var(--tx2);line-height:2.2">
-              Railway: <strong style="color:var(--gr)">$5/mês</strong><br>
-              Backblaze 180GB: <strong style="color:var(--gr)">~$1/mês</strong><br>
-              <strong style="color:var(--ye)">Total: ~$6/mês</strong>
-            </div>
+      <!-- Capacidade -->
+      <div class="card" style="max-width:700px">
+        <div class="card-title">⚡ Capacidade do sistema</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
+          <div style="background:var(--bg);border:1px solid var(--b1);border-radius:8px;padding:14px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--gr)">100+</div>
+            <div style="font-size:11px;color:var(--tx3)">Contas suportadas</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--b1);border-radius:8px;padding:12px">
-            <div style="font-size:12px;font-weight:700;color:var(--p2);margin-bottom:6px">📊 Capacidade</div>
-            <div style="font-size:11px;color:var(--tx2);line-height:2.2">
-              60+ contas ✅<br>
-              12.000+ posts (SQLite) ✅<br>
-              180GB+ vídeos (B2) ✅
-            </div>
+          <div style="background:var(--bg);border:1px solid var(--b1);border-radius:8px;padding:14px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--p2)">100k+</div>
+            <div style="font-size:11px;color:var(--tx3)">Posts/mês (100 × 1000)</div>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--b1);border-radius:8px;padding:14px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--ye)">∞</div>
+            <div style="font-size:11px;color:var(--tx3)">Ciclos de vídeos</div>
           </div>
         </div>
-        <div style="background:var(--bg);border:1px solid var(--b1);border-radius:8px;padding:13px;font-family:monospace;font-size:11px;line-height:2.2;color:var(--tx2)">
-          <div style="color:var(--tx3)"># 1. Suba o projeto no GitHub (github.com → New repository)</div>
-          <div style="color:var(--tx3)"># 2. Deploy no Railway</div>
-          <div style="color:var(--gr)">railway.app → New Project → Deploy from GitHub repo</div>
-          <div style="color:var(--tx3)"># 3. Variáveis de ambiente (aba Variables no Railway):</div>
-          <div style="color:var(--p2)">PORT=3000</div>
-          <div style="color:var(--p2)">B2_KEY_ID=sua_key_id</div>
-          <div style="color:var(--p2)">B2_APP_KEY=sua_application_key</div>
-          <div style="color:var(--p2)">B2_BUCKET=nome-do-bucket</div>
-          <div style="color:var(--p2)">B2_ENDPOINT=https://s3.us-west-004.backblazeb2.com</div>
-          <div style="color:var(--p2)">B2_PUBLIC_URL=https://f004.backblazeb2.com/file/nome-do-bucket</div>
-          <div style="color:var(--tx3)"># 4. Settings → Networking → Generate Domain → acesse de qualquer lugar!</div>
-        </div>
-        <div class="info-box ye" style="margin-top:12px;margin-bottom:0">
-          ⚠️ <strong>Atenção SQLite + Railway:</strong> O Railway usa disco efêmero — o db.sqlite pode ser apagado ao reiniciar. Para produção com 60 contas, recomendo adicionar um volume persistente no Railway (Storage → Add Volume → montar em /app/data).
+        <div class="info-box ye" style="margin-bottom:0">
+          ⚠️ <strong>Volume persistente Railway:</strong> Vá em Storage → Add Volume → monte em <code>/app/data</code> para não perder dados ao reiniciar o container.
         </div>
       </div>
+
     </div>
-
   </div>
 </div>
 
@@ -398,68 +467,65 @@ let currentMode = 'inteligente';
 let uploadQueue = [];
 
 // Clock
-function updateClock(){const n=new Date();document.getElementById('topbarDate').textContent=n.toLocaleDateString('pt-BR')+' '+n.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+function updateClock(){
+  const n=new Date();
+  document.getElementById('topbarDate').textContent=n.toLocaleDateString('pt-BR')+' '+n.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
 updateClock();setInterval(updateClock,1000);
 
-// Toast
-function toast(msg,type='in'){const t=document.createElement('div');t.className=`toast ${type}`;t.textContent=msg;document.getElementById('TC').appendChild(t);setTimeout(()=>t.remove(),4500);}
+function toast(msg,type='in'){const t=document.createElement('div');t.className='toast '+type;t.textContent=msg;document.getElementById('TC').appendChild(t);setTimeout(()=>t.remove(),4500);}
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
-// Nav
-const titles={dash:'Dashboard',accounts:'Contas Instagram',videos:'Vídeos',settings:'Configurações'};
+const pageTitles={dash:'Dashboard',accounts:'Contas Instagram',videos:'Vídeos',problems:'⚠️ Problemas',settings:'Configurações'};
+
 function nav(page){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('act'));
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('act'));
   document.getElementById('panel-'+page).classList.add('act');
   document.getElementById('n-'+page).classList.add('act');
-  document.getElementById('pageTitle').textContent=titles[page];
+  document.getElementById('pageTitle').textContent=pageTitles[page];
   if(page==='dash')loadDash();
-  if(page==='accounts')loadAccounts();
-  if(page==='videos'){populateAccFilter();loadVideos();}
-  if(page==='settings')loadSettings();
+  else if(page==='accounts')loadAccounts();
+  else if(page==='videos'){populateAccFilter();loadVideos();}
+  else if(page==='problems')loadProblems();
+  else if(page==='settings')loadSettings();
 }
 
-// ── UPLOAD QUEUE ────────────────────────────────────────
-function addToQueue(id,accountName,total){
-  uploadQueue.push({id,accountName,total,done:0,status:'uploading',label:'Iniciando...'});
-  renderQueue();
-}
-function updateQueue(id,done,total,label,status){
-  const q=uploadQueue.find(q=>q.id===id);
-  if(!q)return;
-  q.done=done;q.total=total;q.label=label;
-  if(status)q.status=status;
-  renderQueue();
-}
+// ── UPLOAD QUEUE ──────────────────────────────────────
+function addToQueue(id,accName,total){uploadQueue.push({id,accName,total,done:0,status:'uploading',label:'Iniciando...'});renderQueue();}
+function updateQueue(id,done,total,label,status){const q=uploadQueue.find(q=>q.id===id);if(!q)return;q.done=done;q.total=total;q.label=label;if(status)q.status=status;renderQueue();}
 function removeFromQueue(id){uploadQueue=uploadQueue.filter(q=>q.id!==id);renderQueue();}
 function renderQueue(){
-  const active=uploadQueue.filter(q=>q.status==='uploading').length;
-  const el=document.getElementById('sbQueue');
-  el.style.display=uploadQueue.length?'block':'none';
-  document.getElementById('queueCount').textContent=active||'';
+  const active=uploadQueue.filter(q=>q.status==='uploading');
+  const sb=document.getElementById('sbQueue');
+  sb.style.display=uploadQueue.length?'block':'none';
+  document.getElementById('queueCount').textContent=active.length||'';
   document.getElementById('queueList').innerHTML=uploadQueue.map(q=>{
     const pct=q.total>0?Math.round(q.done/q.total*100):0;
     const isDone=q.status==='done',isErr=q.status==='error';
     const fill=isErr?'var(--rd)':isDone?'var(--gr)':'linear-gradient(90deg,var(--p),var(--p2))';
-    return `<div class="queue-item">
-      <div class="queue-item-top">
-        <div class="queue-acc">@${q.accountName}</div>
-        <div class="queue-pct">${isDone?'✓':isErr?'✗':pct+'%'}</div>
-      </div>
-      <div class="queue-bar"><div class="queue-fill" style="width:${isDone?100:pct}%;background:${fill}"></div></div>
-      <div class="queue-status ${isDone?'done':isErr?'err':''}">${q.label}</div>
-      ${isDone||isErr?`<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`:''}
-    </div>`;
+    return '<div class="queue-item"><div class="queue-item-top"><div class="queue-acc">@'+q.accName+'</div><div class="queue-pct">'+(isDone?'✓':isErr?'✗':pct+'%')+'</div></div>'
+      +'<div class="queue-bar"><div class="queue-fill" style="width:'+(isDone?100:pct)+'%;background:'+fill+'"></div></div>'
+      +'<div class="queue-status '+(isDone?'done':isErr?'err':'')+'">'+q.label+'</div>'
+      +(isDone||isErr?'<button class="queue-cancel" onclick="removeFromQueue(\''+q.id+'\')">✕</button>':'')
+      +'</div>';
   }).join('');
 }
 
 // ── UPLOAD ────────────────────────────────────────────
 function openUpload(){
   if(!accounts.length){toast('Adicione uma conta primeiro','er');openModal('modalAddAcc');return;}
-  document.getElementById('up-acc').innerHTML=accounts.map(a=>`<option value="${a.id}">@${a.username||a.label}</option>`).join('');
+  document.getElementById('up-acc').innerHTML=accounts.map(a=>'<option value="'+a.id+'">@'+(a.username||a.label)+'</option>').join('');
+  const defCap=localStorage.getItem('def_caption')||'';
+  const defHash=localStorage.getItem('def_hashtags')||'';
+  document.getElementById('up-cap').value=defCap;
+  document.getElementById('up-hash').value=defHash;
+  document.getElementById('preset-indicator').style.display=defCap?'inline':'none';
+  document.getElementById('preset-hash-indicator').style.display=defHash?'inline':'none';
   openModal('modalUpload');
 }
+
 const dropArea=document.getElementById('dropArea');
 const vfi=document.getElementById('videoFileInput');
 dropArea.addEventListener('dragover',e=>{e.preventDefault();dropArea.classList.add('over');});
@@ -473,60 +539,99 @@ function startUpload(files){
   const acc=accounts.find(a=>a.id===accId);
   if(!accId||!acc){toast('Selecione uma conta','er');return;}
   const qid='q_'+Date.now();
-  const params={
-    accountId:accId,
-    batchName:document.getElementById('up-batch').value,
-    caption:document.getElementById('up-cap').value,
-    hashtags:document.getElementById('up-hash').value,
-    cycles:document.getElementById('up-cycles').value
-  };
-  closeModal('modalUpload');
-  vfi.value='';
+  const params={accountId:accId,batchName:document.getElementById('up-batch').value,caption:document.getElementById('up-cap').value,hashtags:document.getElementById('up-hash').value,cycles:document.getElementById('up-cycles').value};
+  closeModal('modalUpload');vfi.value='';
   addToQueue(qid,acc.username||acc.label,files.length);
-  toast('Upload iniciado para @'+(acc.username||acc.label)+' — pode navegar livremente!','ok');
-  runUploadInBackground(qid,files,params,acc);
+  toast('Upload iniciado para @'+(acc.username||acc.label),'ok');
+  runUpload(qid,files,params,acc);
 }
 
-async function runUploadInBackground(qid,files,params,acc){
-  const BATCH=500;let done=0;const total=files.length;
-  for(let i=0;i<files.length;i+=BATCH){
-    const batch=files.slice(i,i+BATCH);
+async function runUpload(qid,files,params,acc){
+  const total=files.length;
+  updateQueue(qid,0,total,'Enviando '+total+' vídeo(s) para B2...');
+  try{
     const fd=new FormData();
-    batch.forEach(f=>fd.append('videos',f));
+    files.forEach(f=>fd.append('videos',f));
     Object.entries(params).forEach(([k,v])=>fd.append(k,v));
-    updateQueue(qid,done,total,'Enviando '+total+' vídeos para B2...');
-    try{
-      const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(r=>r.json());
-      done+=batch.length;
-      if(r.error){updateQueue(qid,done,total,'Erro: '+r.error,'error');toast('Erro upload: '+r.error,'er');return;}
-    }catch(e){updateQueue(qid,done,total,'Erro de rede','error');toast('Erro de rede','er');return;}
-  }
-  updateQueue(qid,total,total,total+' vídeo(s) agendados!','done');
-  toast('✅ @'+(acc.username||acc.label)+': '+total+' vídeo(s) agendados!','ok');
-  if(document.getElementById('panel-videos').classList.contains('act'))loadVideos();
-  if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
+    const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(r=>r.json());
+    if(r.error){updateQueue(qid,0,total,'Erro: '+r.error,'error');toast('Erro: '+r.error,'er');return;}
+    updateQueue(qid,total,total,total+' vídeo(s) agendados! ✓','done');
+    toast('✅ @'+(acc.username||acc.label)+': '+total+' vídeo(s) agendados!','ok');
+    if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
+  }catch(e){updateQueue(qid,0,total,'Erro: '+e.message,'error');toast('Erro de rede','er');}
   setTimeout(()=>removeFromQueue(qid),30000);
 }
 
 // ── DASHBOARD ─────────────────────────────────────────
 async function loadDash(){
-  const[sr,vr]=await Promise.all([fetch('/api/stats').then(r=>r.json()),fetch('/api/videos?status=pendente&limit=8').then(r=>r.json())]);
-  document.getElementById('ds-total').textContent=sr.total||0;
-  document.getElementById('ds-posted').textContent=sr.postado||0;
-  document.getElementById('ds-pending').textContent=sr.pendente||0;
-  document.getElementById('ds-error').textContent=sr.erro||0;
-  document.getElementById('ds-accs').textContent=sr.accounts||0;
-  document.getElementById('ds-proc').textContent=sr.activeJobs||0;
+  const [statsR,nextR]=await Promise.all([
+    fetch('/api/stats').then(r=>r.json()),
+    fetch('/api/videos?status=pendente&limit=8').then(r=>r.json())
+  ]);
+  document.getElementById('ds-total').textContent=statsR.total||0;
+  document.getElementById('ds-posted').textContent=statsR.postado||0;
+  document.getElementById('ds-pending').textContent=statsR.pendente||0;
+  document.getElementById('ds-error').textContent=statsR.erro||0;
+  document.getElementById('ds-accs').textContent=statsR.accounts||0;
+  document.getElementById('ds-jobs').textContent=statsR.activeJobs||0;
+
   const today=new Date().toISOString().split('T')[0];
-  const tr=await fetch('/api/videos?status=postado&date='+today).then(r=>r.json());
-  document.getElementById('ds-today').textContent=(tr.videos||[]).length;
-  const next=vr.videos||[];
+  const todayR=await fetch('/api/videos?status=postado&date='+today+'&limit=999').then(r=>r.json());
+  document.getElementById('ds-today').textContent=(todayR.videos||[]).length;
+
+  // Tabela por conta
+  await loadDashTable();
+
+  // Próximas
+  const next=nextR.videos||[];
   const el=document.getElementById('dashNextList');
   if(!next.length){el.innerHTML='<div class="empty"><div class="empty-icon">📅</div><p>Nenhum post agendado</p></div>';return;}
-  el.innerHTML=next.map(v=>`<div class="video-item">
-    <div class="video-left"><span class="video-icon">⏰</span><div><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}</div></div></div>
-    <div class="video-right"><div><span class="badge b-pend">pendente</span><div class="video-date">${fmtDT(v.scheduledFor)}</div></div></div>
-  </div>`).join('');
+  el.innerHTML=next.map(v=>'<div class="video-item"><div class="video-left"><span class="video-icon">⏰</span><div><div class="video-name">'+v.originalName+'</div><div class="video-account">@'+v.username+'</div></div></div><div class="video-right"><div><span class="badge b-pend">pendente</span><div class="video-date">'+fmtDT(v.scheduledFor)+'</div></div></div></div>').join('');
+}
+
+async function loadDashTable(){
+  if(!accounts.length){document.getElementById('dashAccBody').innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--tx3);padding:20px">Nenhuma conta cadastrada</td></tr>';return;}
+
+  // Busca contagens de cada conta em paralelo (suporte a 100+)
+  const rows=await Promise.all(accounts.map(async a=>{
+    const [vr,lr]=await Promise.all([
+      fetch('/api/videos?accountId='+a.id+'&limit=1').then(r=>r.json()),
+      fetch('/api/videos?accountId='+a.id+'&status=postado&limit=1').then(r=>r.json())
+    ]);
+    const c=vr.counts||{};
+    const lastPost=(lr.videos||[])[0];
+    return {acc:a,c,lastPost};
+  }));
+
+  // Atualiza badge de problemas
+  const withErrors=rows.filter(r=>r.c.erro>0);
+  const badge=document.getElementById('problemBadge');
+  badge.style.display=withErrors.length?'inline':'none';
+  badge.textContent=withErrors.length;
+
+  document.getElementById('dashAccBody').innerHTML=rows.map(({acc,c,lastPost})=>{
+    const total=c.todos||0;
+    const postado=c.postado||0;
+    const pct=total>0?Math.round(postado/total*100):0;
+    const fillCls=pct>=90?'ok':pct>=50?'':'warn';
+    const hasErr=(c.erro||0)>0;
+    return '<tr>'
+      +'<td style="font-weight:600">@'+(acc.username||acc.label)+'<div style="font-size:10px;color:var(--tx3);font-weight:400">'+(acc.label!==acc.username&&acc.label?acc.label:'')+'</div></td>'
+      +'<td style="color:var(--gr);font-weight:600">'+(c.postado||0)+'</td>'
+      +'<td style="color:var(--ye)">'+(c.pendente||0)+'</td>'
+      +'<td style="color:'+(hasErr?'var(--rd)':'var(--tx3)')+';font-weight:'+(hasErr?'600':'400')+'">'+(c.erro||0)+'</td>'
+      +'<td>'+total+'</td>'
+      +'<td><div style="font-size:11px">'+pct+'%</div><div class="prog-bar"><div class="prog-fill '+fillCls+'" style="width:'+pct+'%"></div></div></td>'
+      +'<td style="color:var(--tx3);font-size:11px">'+(lastPost?fmtDT(lastPost.postedAt):'—')+'</td>'
+      +'<td>'+(hasErr?'<span class="badge b-erro">⚠ erro</span>':'<span class="badge b-post">✓ ok</span>')+'</td>'
+      +'</tr>';
+  }).join('');
+}
+
+function filterDashTable(q){
+  document.querySelectorAll('#dashAccBody tr').forEach(r=>{
+    r.style.display=r.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';
+  });
 }
 
 // ── ACCOUNTS ──────────────────────────────────────────
@@ -534,43 +639,42 @@ async function loadAccounts(){
   const data=await fetch('/api/accounts').then(r=>r.json());
   accounts=data;updateSbAccounts();
   const grid=document.getElementById('accGrid');
-  if(!accounts.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta adicionada.</p></div>';return;}
-  const vr=await fetch('/api/videos?limit=99999').then(r=>r.json());
-  const byAcc={};
-  (vr.videos||[]).forEach(v=>{if(!byAcc[v.accountId])byAcc[v.accountId]={total:0,postado:0,pendente:0,erro:0};byAcc[v.accountId].total++;byAcc[v.accountId][v.status]=(byAcc[v.accountId][v.status]||0)+1;});
-  grid.innerHTML=accounts.map(a=>{
-    const c=byAcc[a.id]||{total:0,postado:0,pendente:0,erro:0};
-    return `<div class="acc-card">
-      <div class="acc-card-top">
-        <div class="acc-card-left">
-          <div class="acc-avatar">📷</div>
-          <div>
-            <div class="acc-username">@${a.username||a.label}</div>
-            <span class="acc-badge custom">custom</span>
-            <span class="acc-badge intel" style="margin-left:3px">⚡ ${a.intervalMode||'Inteligente'}</span>
-            <div class="acc-status" style="margin-top:2px">● active</div>
-            <div class="acc-id">ID: ${(a.igAccountId||'').slice(0,14)}...</div>
-          </div>
-        </div>
-        <div class="acc-card-actions">
-          <button title="Testar conexão" onclick="testAccount('${a.id}')">🔗</button>
-          <button class="del" title="Remover conta" onclick="delAccount('${a.id}')">🗑</button>
-        </div>
-      </div>
-      <div class="acc-info-row"><span class="acc-info-lbl">Posts totais:</span><span class="acc-info-val">${c.total}</span></div>
-      <div class="acc-info-row"><span class="acc-info-lbl">Janela de tempo:</span><span class="acc-info-val">${a.startTime} - ${a.endTime}</span></div>
-      <div class="acc-info-row"><span class="acc-info-lbl">Vídeos por dia:</span><span class="acc-info-val">${a.postsPerDay}</span></div>
-      <div class="acc-info-row"><span class="acc-info-lbl">Intervalo calculado:</span><span class="acc-info-val">${a.intervalMinutes}min</span></div>
-    </div>`;
+  if(!accounts.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta adicionada</p></div>';return;}
+
+  const vcounts=await Promise.all(accounts.map(a=>fetch('/api/videos?accountId='+a.id+'&limit=1').then(r=>r.json())));
+  grid.innerHTML=accounts.map((a,i)=>{
+    const c=(vcounts[i]||{}).counts||{};
+    const hasErr=(c.erro||0)>0;
+    return '<div class="acc-card '+(hasErr?'has-error':'')+'" data-name="'+(a.username||a.label).toLowerCase()+'">'
+      +'<div class="acc-card-top"><div class="acc-card-left"><div class="acc-avatar '+(hasErr?'err':'')+'">📷</div>'
+      +'<div><div class="acc-username">@'+(a.username||a.label)+'</div>'
+      +'<span class="acc-badge intel">⚡ '+(a.intervalMode||'inteligente')+'</span>'
+      +'<div class="acc-status '+(hasErr?'err':'')+'">● '+(hasErr?'com erros':'ativo')+'</div>'
+      +'</div></div>'
+      +'<div class="acc-card-actions">'
+      +'<button title="Testar conexão" onclick="testAccount(\''+a.id+'\')">🔗</button>'
+      +'<button class="del" title="Remover conta" onclick="delAccount(\''+a.id+'\')">🗑</button>'
+      +'</div></div>'
+      +'<div class="acc-info-row"><span class="acc-info-lbl">Postados</span><span class="acc-info-val" style="color:var(--gr)">'+(c.postado||0)+'</span></div>'
+      +'<div class="acc-info-row"><span class="acc-info-lbl">Pendentes</span><span class="acc-info-val" style="color:var(--ye)">'+(c.pendente||0)+'</span></div>'
+      +'<div class="acc-info-row"><span class="acc-info-lbl">Erros</span><span class="acc-info-val '+(hasErr?'err':'')+'">'+(c.erro||0)+'</span></div>'
+      +'<div class="acc-info-row"><span class="acc-info-lbl">Janela</span><span class="acc-info-val">'+a.startTime+' — '+a.endTime+'</span></div>'
+      +'<div class="acc-info-row"><span class="acc-info-lbl">Posts/dia</span><span class="acc-info-val">'+a.postsPerDay+' · '+a.intervalMinutes+'min</span></div>'
+      +(hasErr?'<button class="btn btn-d btn-sm" style="width:100%;margin-top:10px" onclick="retryAccountErrors(\''+a.id+'\')">↺ Retry erros desta conta</button>':'')
+      +'</div>';
   }).join('');
 }
 
+function filterAccCards(q){
+  document.querySelectorAll('#accGrid .acc-card').forEach(el=>{
+    el.style.display=(el.dataset.name||'').includes(q.toLowerCase())?'':'none';
+  });
+}
+
 function updateSbAccounts(){
-  document.getElementById('sbAccsList').innerHTML=accounts.map(a=>`
-    <div class="sb-acc-item" onclick="nav('accounts')">
-      <div class="sb-acc-av">${(a.username||'?')[0].toUpperCase()}</div>
-      <div><div class="sb-acc-name">@${a.username||a.label}</div><div class="sb-acc-handle">${a.postsPerDay}×/dia · ${a.intervalMinutes}min</div></div>
-    </div>`).join('');
+  const list=accounts.slice(0,25);
+  document.getElementById('sbAccsList').innerHTML=list.map(a=>'<div class="sb-acc-item" onclick="nav(\'accounts\')"><div class="sb-acc-av">'+(a.username||'?')[0].toUpperCase()+'</div><div><div class="sb-acc-name">@'+(a.username||a.label)+'</div><div class="sb-acc-handle">'+a.postsPerDay+'×/dia · '+a.intervalMinutes+'min</div></div></div>').join('')
+    +(accounts.length>25?'<div style="font-size:10px;color:var(--tx3);padding:4px 10px">+ '+(accounts.length-25)+' mais...</div>':'');
 }
 
 function selMode(mode){
@@ -583,9 +687,11 @@ function updateIntervalPreview(){
   const ppd=parseInt(document.getElementById('aa-ppd').value)||40;
   const st=document.getElementById('aa-st').value||'02:00';
   const et=document.getElementById('aa-et').value||'23:00';
-  const[sh,sm]=st.split(':').map(Number);const[eh,em]=et.split(':').map(Number);
-  const w=(eh*60+em)-(sh*60+sm);const iv=ppd>1?Math.floor(w/(ppd-1)):w;
-  document.getElementById('intervalPreview').textContent='Intervalo: '+iv+' min entre posts · '+ppd+' posts/dia em janela de '+w+' min';
+  const [sh,sm]=st.split(':').map(Number);
+  const [eh,em]=et.split(':').map(Number);
+  const w=(eh*60+em)-(sh*60+sm);
+  const iv=ppd>1?Math.floor(w/(ppd-1)):w;
+  document.getElementById('intervalPreview').textContent='Intervalo: '+iv+' min · '+ppd+' posts/dia em janela de '+w+' min';
 }
 updateIntervalPreview();
 
@@ -599,15 +705,9 @@ async function addAccount(){
   const btn=document.getElementById('addAccBtn');
   btn.disabled=true;btn.innerHTML='<div class="spin"></div> Verificando...';
   try{
-    const r=await fetch('/api/accounts',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({accessToken:token,label,postsPerDay:ppd,startTime:st,endTime:et,intervalMode:currentMode})}).then(r=>r.json());
-    if(r.success){
-      toast('✅ @'+r.account.username+' adicionada!','ok');
-      closeModal('modalAddAcc');
-      document.getElementById('aa-token').value='';
-      document.getElementById('aa-label').value='';
-      loadAccounts();
-    }else toast('Erro: '+r.error,'er');
+    const r=await fetch('/api/accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accessToken:token,label,postsPerDay:ppd,startTime:st,endTime:et,intervalMode:currentMode})}).then(r=>r.json());
+    if(r.success){toast('✅ @'+r.account.username+' adicionada!','ok');closeModal('modalAddAcc');document.getElementById('aa-token').value='';document.getElementById('aa-label').value='';loadAccounts();}
+    else toast('Erro: '+r.error,'er');
   }catch(e){toast('Erro: '+e.message,'er');}
   btn.disabled=false;btn.innerHTML='✅ Verificar e adicionar';
 }
@@ -624,13 +724,78 @@ async function delAccount(id){
   toast('Conta removida','wa');loadAccounts();
 }
 
+// ── PROBLEMS ──────────────────────────────────────────
+async function loadProblems(){
+  const data=await fetch('/api/videos?status=erro&limit=1000').then(r=>r.json());
+  const errs=data.videos||[];
+  const el=document.getElementById('problemsList');
+
+  if(!errs.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">✅</div><p>Nenhum problema encontrado! Todas as contas estão operando normalmente.</p></div>';
+    document.getElementById('problemBadge').style.display='none';
+    return;
+  }
+
+  // Agrupa por conta
+  const byAcc={};
+  errs.forEach(v=>{
+    if(!byAcc[v.accountId])byAcc[v.accountId]={username:v.username,accountId:v.accountId,videos:[]};
+    byAcc[v.accountId].videos.push(v);
+  });
+
+  const groups=Object.values(byAcc);
+  document.getElementById('problemBadge').style.display='inline';
+  document.getElementById('problemBadge').textContent=groups.length;
+
+  el.innerHTML=groups.map(g=>{
+    const lastErr=g.videos[0];
+    const errMsg=lastErr.errorMsg||'Erro desconhecido';
+    return '<div class="prob-item">'
+      +'<div class="prob-icon">⚠️</div>'
+      +'<div class="prob-body">'
+      +'<div class="prob-acc">@'+g.username+' — '+g.videos.length+' vídeo(s) com erro</div>'
+      +'<div class="prob-msg">'+errMsg.slice(0,200)+'</div>'
+      +'<div class="prob-files">'
+      +g.videos.slice(0,5).map(v=>'<span class="prob-file-tag">'+v.originalName.slice(0,35)+'</span>').join('')
+      +(g.videos.length>5?'<span class="prob-file-tag">+ '+(g.videos.length-5)+' mais</span>':'')
+      +'</div></div>'
+      +'<div class="prob-actions">'
+      +'<button class="btn btn-gr btn-sm" onclick="retryAccountErrors(\''+g.accountId+'\')">↺ Retry</button>'
+      +'<button class="btn btn-d btn-sm" onclick="clearAccountErrors(\''+g.accountId+'\')">🗑 Limpar</button>'
+      +'</div></div>';
+  }).join('');
+}
+
+async function retryAccountErrors(accountId){
+  const data=await fetch('/api/videos?accountId='+accountId+'&status=erro&limit=9999').then(r=>r.json());
+  const errs=data.videos||[];
+  await Promise.all(errs.map(v=>fetch('/api/videos/'+v.id+'/retry',{method:'POST'})));
+  toast('↺ '+errs.length+' vídeo(s) reagendados','ok');
+  loadProblems();
+}
+
+async function retryAllErrors(){
+  const data=await fetch('/api/videos?status=erro&limit=9999').then(r=>r.json());
+  const errs=data.videos||[];
+  if(!errs.length){toast('Nenhum erro encontrado','in');return;}
+  await Promise.all(errs.map(v=>fetch('/api/videos/'+v.id+'/retry',{method:'POST'})));
+  toast('↺ '+errs.length+' vídeo(s) reagendados','ok');
+  loadProblems();
+}
+
+async function clearAccountErrors(accountId){
+  if(!confirm('Remover permanentemente os vídeos com erro desta conta?'))return;
+  const data=await fetch('/api/videos?accountId='+accountId+'&status=erro&limit=9999').then(r=>r.json());
+  await Promise.all((data.videos||[]).map(v=>fetch('/api/videos/'+v.id,{method:'DELETE'})));
+  toast('Erros removidos','wa');loadProblems();
+}
+
 // ── VIDEOS ────────────────────────────────────────────
 async function populateAccFilter(){
   const data=await fetch('/api/accounts').then(r=>r.json());
   accounts=data;updateSbAccounts();
   const sel=document.getElementById('accFilter');const cur=sel.value;
-  sel.innerHTML='<option value="all">Todas as contas</option>'+
-    accounts.map(a=>'<option value="'+a.id+'" '+(a.id===cur?'selected':'')+'>@'+(a.username||a.label)+'</option>').join('');
+  sel.innerHTML='<option value="all">Todas as contas</option>'+accounts.map(a=>'<option value="'+a.id+'" '+(a.id===cur?'selected':'')+'>@'+(a.username||a.label)+'</option>').join('');
 }
 function filterTab(status,btn){
   currentStatus=status;
@@ -645,34 +810,13 @@ async function loadVideos(){
   if(date)url+='&date='+date;
   const data=await fetch(url).then(r=>r.json());
   const videos=data.videos||[];const counts=data.counts||{};
-  ['todos','pendente','processando','postado','erro'].forEach(s=>{
-    const el=document.getElementById('cnt-'+s);if(el)el.textContent=counts[s]||0;
-  });
+  ['todos','pendente','processando','postado','erro'].forEach(s=>{const el=document.getElementById('cnt-'+s);if(el)el.textContent=counts[s]||0;});
   document.getElementById('pendCount').textContent=counts.pendente||0;
   const el=document.getElementById('videosList');
   if(!videos.length){el.innerHTML='<div class="empty"><div class="empty-icon">🎬</div><p>Nenhum vídeo encontrado</p></div>';return;}
   const iconMap={pendente:'⏰',processando:'🔄',postado:'✅',erro:'❌',cancelado:'🚫'};
   const scMap={pendente:'b-pend',processando:'b-proc',postado:'b-post',erro:'b-erro',cancelado:'b-canc'};
-  el.innerHTML=videos.map(v=>`<div class="video-item">
-    <div class="video-left"><span class="video-icon">${iconMap[v.status]||'⏰'}</span>
-      <div style="min-width:0">
-        <div class="video-name">${v.originalName}</div>
-        <div class="video-account">@${v.username}${v.cycle>1?' · ciclo '+v.cycle:''}</div>
-        ${v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,70)+'</div>':''}
-      </div>
-    </div>
-    <div class="video-right">
-      <div style="text-align:right">
-        <span class="badge ${scMap[v.status]}">${v.status}</span>
-        <div class="video-date">${v.status==='postado'?'✓ '+fmtDT(v.postedAt):'Agendado '+fmtDT(v.scheduledFor)}</div>
-      </div>
-      <div class="video-actions">
-        ${v.status==='erro'?'<button class="icon-btn" title="Retry" onclick="retryVideo(\''+v.id+'\')">↺</button>':''}
-        ${v.status==='pendente'?'<button class="icon-btn" title="Postar agora" onclick="pubNow(\''+v.id+'\')">▶</button>':''}
-        <button class="icon-btn danger" title="Remover" onclick="delVideo(\''+v.id+'\')">✕</button>
-      </div>
-    </div>
-  </div>`).join('');
+  el.innerHTML=videos.map(v=>'<div class="video-item"><div class="video-left"><span class="video-icon">'+(iconMap[v.status]||'⏰')+'</span><div style="min-width:0"><div class="video-name">'+v.originalName+'</div><div class="video-account">@'+v.username+(v.cycle>1?' · ciclo '+v.cycle:'')+'</div>'+(v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,80)+'</div>':'')+'</div></div><div class="video-right"><div style="text-align:right"><span class="badge '+scMap[v.status]+'">'+v.status+'</span><div class="video-date">'+(v.status==='postado'?'✓ '+fmtDT(v.postedAt):'Agendado '+fmtDT(v.scheduledFor))+'</div></div><div class="video-actions">'+(v.status==='erro'?'<button class="icon-btn" title="Retry" onclick="retryVideo(\''+v.id+'\')">↺</button>':'')+(v.status==='pendente'?'<button class="icon-btn" title="Postar agora" onclick="pubNow(\''+v.id+'\')">▶</button>':'')+'<button class="icon-btn danger" title="Remover" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>').join('');
 }
 async function cancelPending(){
   const accId=document.getElementById('accFilter').value;
@@ -685,6 +829,16 @@ async function pubNow(id){if(!confirm('Publicar agora?'))return;await fetch('/ap
 async function delVideo(id){await fetch('/api/videos/'+id,{method:'DELETE'});loadVideos();}
 
 // ── SETTINGS ──────────────────────────────────────────
+function saveDefaults(){
+  localStorage.setItem('def_caption',document.getElementById('def-cap').value);
+  localStorage.setItem('def_hashtags',document.getElementById('def-hash').value);
+  toast('✅ Legenda padrão salva!','ok');
+}
+function clearDefaults(){
+  localStorage.removeItem('def_caption');localStorage.removeItem('def_hashtags');
+  document.getElementById('def-cap').value='';document.getElementById('def-hash').value='';
+  toast('Legenda padrão removida','wa');
+}
 async function loadSettings(){
   const r=await fetch('/api/settings').then(r=>r.json());
   if(r.b2KeyId)document.getElementById('b2-kid').value=r.b2KeyId;
@@ -692,15 +846,11 @@ async function loadSettings(){
   if(r.b2Bucket)document.getElementById('b2-bkt').value=r.b2Bucket;
   if(r.b2Endpoint)document.getElementById('b2-ep').value=r.b2Endpoint;
   if(r.b2PublicUrl)document.getElementById('b2-pub').value=r.b2PublicUrl;
+  document.getElementById('def-cap').value=localStorage.getItem('def_caption')||'';
+  document.getElementById('def-hash').value=localStorage.getItem('def_hashtags')||'';
 }
 async function saveSettings(){
-  const body={
-    b2KeyId:document.getElementById('b2-kid').value.trim(),
-    b2AppKey:document.getElementById('b2-key').value.trim(),
-    b2Bucket:document.getElementById('b2-bkt').value.trim(),
-    b2Endpoint:document.getElementById('b2-ep').value.trim(),
-    b2PublicUrl:document.getElementById('b2-pub').value.trim()
-  };
+  const body={b2KeyId:document.getElementById('b2-kid').value.trim(),b2AppKey:document.getElementById('b2-key').value.trim(),b2Bucket:document.getElementById('b2-bkt').value.trim(),b2Endpoint:document.getElementById('b2-ep').value.trim(),b2PublicUrl:document.getElementById('b2-pub').value.trim()};
   if(!body.b2KeyId||!body.b2Bucket){toast('Preencha pelo menos Key ID e Bucket','er');return;}
   await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   toast('✅ Configurações salvas!','ok');
@@ -721,6 +871,7 @@ setInterval(()=>{
   const a=document.querySelector('.panel.act')?.id;
   if(a==='panel-dash')loadDash();
   if(a==='panel-videos')loadVideos();
+  if(a==='panel-problems')loadProblems();
 },30000);
 init();
 </script>
