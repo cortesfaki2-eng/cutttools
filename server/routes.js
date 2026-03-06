@@ -8,7 +8,7 @@ const db = require('./db');
 const ig = require('./instagram');
 const b2 = require('./b2');
 
-const router = express.Router();asdfasdf
+const router = express.Router();
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/temp');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
