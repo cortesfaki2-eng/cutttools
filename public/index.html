@@ -548,32 +548,61 @@ function startUpload(files){
 
 async function runUpload(qid,files,params,acc){
   const total=files.length;
-  const totalMB=(files.reduce((s,f)=>s+f.size,0)/1024/1024).toFixed(1);
-  updateQueue(qid,0,100,'Enviando '+total+' vídeo(s) ('+totalMB+'MB)...');
+  let done=0;
+  updateQueue(qid,0,100,'Iniciando envio de '+total+' vídeo(s)...');
 
-  // Animação de progresso simulada enquanto envia
-  let fakePct=0;
-  const fakeTimer=setInterval(()=>{
-    if(fakePct<90){fakePct+=Math.random()*3;updateQueue(qid,Math.min(fakePct,90),100,'Enviando '+total+' vídeo(s) ('+totalMB+'MB)... '+Math.round(Math.min(fakePct,90))+'%');}
-  },1500);
+  for(let i=0;i<files.length;i++){
+    const f=files[i];
+    const mb=(f.size/1024/1024).toFixed(1);
+    const isLast=(i===files.length-1);
+    updateQueue(qid,Math.round(i/total*100),100,(i+1)+'/'+total+' — '+f.name.slice(0,30)+' ('+mb+'MB)');
 
-  try{
-    const fd=new FormData();
-    files.forEach(f=>fd.append('videos',f));
-    Object.entries(params).forEach(([k,v])=>fd.append(k,v));
+    try{
+      const fd=new FormData();
+      fd.append('videos',f);
+      // cycles e agendamento só no último arquivo para não duplicar
+      fd.append('accountId',params.accountId);
+      fd.append('caption',params.caption||'');
+      fd.append('hashtags',params.hashtags||'');
+      fd.append('batchName',params.batchName||'');
+      fd.append('cycles',isLast?params.cycles:'1');
+      fd.append('isLastOfBatch',isLast?'true':'false');
 
-    const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(r=>r.json());
+      const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(res=>res.json());
 
-    clearInterval(fakeTimer);
-    if(r.error){updateQueue(qid,0,100,'Erro: '+r.error,'error');toast('Erro: '+r.error,'er');return;}
-    updateQueue(qid,100,100,total+' vídeo(s) agendados! ✓','done');
-    toast('✅ @'+(acc.username||acc.label)+': '+total+' vídeo(s) agendados!','ok');
-    if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
-  }catch(e){
-    clearInterval(fakeTimer);
-    updateQueue(qid,0,100,'Erro: '+e.message,'error');
-    toast('Erro no upload: '+e.message,'er');
+      if(r.error){
+        updateQueue(qid,0,100,'Erro: '+r.error,'error');
+        toast('Erro em '+f.name+': '+r.error,'er');
+        return;
+      }
+
+      // Polling B2 para este arquivo
+      if(r.jobId){
+        await new Promise(resolve=>{
+          const t=setInterval(async()=>{
+            try{
+              const p=await fetch('/api/upload-progress/'+r.jobId).then(res=>res.json());
+              if(!p.found||p.status==='done'||p.status==='not_found'){
+                clearInterval(t);resolve();
+              }
+            }catch(e){clearInterval(t);resolve();}
+          },1500);
+        });
+      }
+
+      done++;
+      updateQueue(qid,Math.round(done/total*100),100,done+'/'+total+' vídeo(s) enviados ao B2 ✓');
+
+    }catch(e){
+      updateQueue(qid,0,100,'Erro: '+e.message,'error');
+      toast('Erro no upload: '+e.message,'er');
+      return;
+    }
   }
+
+  updateQueue(qid,100,100,done+'/'+total+' vídeo(s) agendados! ✓','done');
+  toast('✅ @'+(acc.username||acc.label)+': '+done+' vídeo(s) agendados!','ok');
+  if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
   setTimeout(()=>removeFromQueue(qid),30000);
 }
 
