@@ -936,7 +936,7 @@ async function loadVideos(){
   if(!videos.length){el.innerHTML='<div class="empty"><div class="empty-icon">🎬</div><p>Nenhum vídeo encontrado</p></div>';return;}
   const iconMap={pendente:'⏰',processando:'🔄',postado:'✅',erro:'❌',cancelado:'🚫'};
   const scMap={pendente:'b-pend',processando:'b-proc',postado:'b-post',erro:'b-erro',cancelado:'b-canc'};
-  el.innerHTML=videos.map(v=>'<div class="video-item"><div class="video-left"><span class="video-icon">'+(iconMap[v.status]||'⏰')+'</span><div style="min-width:0"><div class="video-name">'+v.originalName+'</div><div class="video-account">@'+v.username+(v.cycle>1?' · ciclo '+v.cycle:'')+'</div>'+(v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,80)+'</div>':'')+'</div></div><div class="video-right"><div style="text-align:right"><span class="badge '+scMap[v.status]+'">'+v.status+'</span><div class="video-date">'+(v.status==='postado'?'✓ '+fmtDT(v.postedAt):'Agendado '+fmtDT(v.scheduledFor))+'</div></div><div class="video-actions">'+(v.status==='erro'?'<button class="icon-btn" title="Retry" onclick="retryVideo(\''+v.id+'\')">↺</button>':'')+(v.status==='pendente'?'<button class="icon-btn" title="Postar agora" onclick="pubNow(\''+v.id+'\')">▶</button>':'')+'<button class="icon-btn danger" title="Remover" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>').join('');
+  el.innerHTML=videos.map(v=>'<div class="video-item"><div class="video-left"><span class="video-icon">'+(iconMap[v.status]||'⏰')+'</span><div style="min-width:0"><div class="video-name">'+v.originalName+'</div><div class="video-account">@'+v.username+(v.cycle>1?' · ciclo '+v.cycle:'')+'</div>'+(v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,80)+'</div>':'')+'</div></div><div class="video-right"><div style="text-align:right"><span class="badge '+scMap[v.status]+'">'+v.status+'</span><div class="video-date">'+(v.status==='postado'?'✓ '+fmtDT(v.postedAt):'Agendado '+fmtDT(v.scheduledFor))+'</div></div><div class="video-actions">'+(v.status==='erro'?'<button class="icon-btn" title="Retry" onclick="retryVideo(\''+v.id+'\')">↺</button>':'')+(v.status==='pendente'?'<button class="icon-btn" title="Postar agora" onclick="pubNow(\''+v.id+'\')">▶</button>':'')+'<button class="icon-btn" title="Copiar URL" onclick="copyUrl(v)">🔗</button>'+'<button class="icon-btn danger" title="Remover" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>').join('');
 }
 async function cancelPending(){
   const accId=document.getElementById('accFilter').value;
@@ -946,6 +946,13 @@ async function cancelPending(){
 }
 async function retryVideo(id){await fetch('/api/videos/'+id+'/retry',{method:'POST'});toast('Reagendado','ok');loadVideos();}
 async function pubNow(id){if(!confirm('Publicar agora?'))return;await fetch('/api/videos/'+id+'/publish-now',{method:'POST'});toast('Publicando...','in');setTimeout(loadVideos,8000);}
+function copyUrl(v){
+  const url = v.b2Url || v.cloudinaryUrl || '';
+  if(!url){toast('URL não disponível','er');return;}
+  navigator.clipboard.writeText(url).then(()=>toast('URL copiada!','ok')).catch(()=>{
+    prompt('Copie a URL:', url);
+  });
+}
 async function delVideo(id){await fetch('/api/videos/'+id,{method:'DELETE'});loadVideos();}
 
 // ── SETTINGS ──────────────────────────────────────────
