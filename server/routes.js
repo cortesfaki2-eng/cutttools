@@ -42,8 +42,7 @@ function configureB2FromDB() {
     b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
   }
 }
-// Configura B2 uma vez na inicialização
-configureB2FromDB();
+// B2 será configurado pelo index.js após o DB inicializar
 
 function getLastScheduledTime(accountId) {
   const all = db.getVideos({ accountId, limit: 99999 });
