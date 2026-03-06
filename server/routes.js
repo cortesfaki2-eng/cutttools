@@ -5,7 +5,7 @@ const fs = require('fs');
 const { v4: uuid } = require('uuid');
 const Busboy = require('busboy');
 const db = require('./db');
-const ig = require('./instagram');
+const ig = require('./instagram'
 const b2 = require('./b2');
 
 const router = express.Router();
