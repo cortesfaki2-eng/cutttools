@@ -72,16 +72,20 @@ async function publishVideo(accessToken, igAccountId, videoUrl, caption) {
 
   for (let i = 0; i < 24; i++) {
     await sleep(5000);
-    let code;
+    let statusData;
     try {
-      const r = await axios.get(`${IG_BASE}/${creationId}`, { params: { fields: 'status_code', access_token: accessToken } });
-      code = r.data.status_code;
+      const r = await axios.get(`${IG_BASE}/${creationId}`, { params: { fields: 'status_code,error_message', access_token: accessToken } });
+      statusData = r.data;
     } catch(e) {
-      const r = await axios.get(`${BASE}/${creationId}`, { params: { fields: 'status_code', access_token: accessToken } });
-      code = r.data.status_code;
+      const r = await axios.get(`${BASE}/${creationId}`, { params: { fields: 'status_code,error_message', access_token: accessToken } });
+      statusData = r.data;
     }
+    const code = statusData.status_code;
     if (code === 'FINISHED') break;
-    if (code === 'ERROR') throw new Error('Instagram rejeitou o vídeo');
+    if (code === 'ERROR') {
+      const reason = statusData.error_message || statusData.error?.message || 'motivo desconhecido';
+      throw new Error('Instagram rejeitou o vídeo: ' + reason);
+    }
     if (i === 23) throw new Error('Timeout: processamento demorou mais de 2 minutos');
   }
 
