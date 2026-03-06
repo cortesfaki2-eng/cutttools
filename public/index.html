@@ -593,28 +593,33 @@ async function runUpload(qid,files,params,acc){
   async function uploadOne(f,idx){
     const isLast=(idx===files.length-1);
     try{
-      const fd=new FormData();
-      fd.append('videos',f);
-      fd.append('accountId',params.accountId);
-      fd.append('caption',params.caption||'');
-      fd.append('hashtags',params.hashtags||'');
-      fd.append('batchName',params.batchName||'');
-      fd.append('cycles',isLast?params.cycles:'1');
-      fd.append('isLastOfBatch',isLast?'true':'false');
+      // 1) Pede URL pré-assinada ao servidor
+      const presign=await fetch('/api/videos/presign?filename='+encodeURIComponent(f.name)+'&accountId='+params.accountId+'&contentType='+encodeURIComponent(f.type||'video/mp4')).then(r=>r.json());
+      if(presign.error) throw new Error(presign.error);
 
-      const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(res=>res.json());
-      if(r.error) throw new Error(r.error);
+      // 2) Envia direto pro R2 (sem passar pelo Railway)
+      const upload=await fetch(presign.uploadUrl,{method:'PUT',body:f,headers:{'Content-Type':f.type||'video/mp4'}});
+      if(!upload.ok) throw new Error('Erro no upload direto: '+upload.status);
 
-      if(r.jobId){
-        await new Promise(resolve=>{
-          const t=setInterval(async()=>{
-            try{
-              const p=await fetch('/api/upload-progress/'+r.jobId).then(res=>res.json());
-              if(!p.found||p.status==='done'||p.status==='not_found'){clearInterval(t);resolve();}
-            }catch(e){clearInterval(t);resolve();}
-          },1500);
-        });
-      }
+      // 3) Avisa o servidor para registrar no banco
+      const confirm=await fetch('/api/videos/confirm',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          accountId:params.accountId,
+          key:presign.key,
+          publicFileUrl:presign.publicFileUrl,
+          originalName:f.name,
+          bytes:f.size,
+          caption:params.caption||'',
+          hashtags:params.hashtags||'',
+          batchName:params.batchName||'',
+          cycles:isLast?params.cycles:'1',
+          isLastOfBatch:isLast
+        })
+      }).then(r=>r.json());
+      if(confirm.error) throw new Error(confirm.error);
+
       done++;
       updateQueue(qid,Math.round(done/total*100),100,done+'/'+total+' vídeo(s) enviados ✓');
     }catch(e){
