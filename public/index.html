@@ -455,6 +455,23 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar configurações B2</button>
       </div>
 
+      <!-- Fuso horário -->
+      <div class="card" style="max-width:700px">
+        <div class="card-title">🕐 Fuso Horário</div>
+        <p style="color:var(--tx2);font-size:13px;margin-bottom:12px">O servidor roda em UTC. Informe seu offset para que os agendamentos apareçam no horário correto.</p>
+        <div class="field">
+          <label>Offset UTC (horas)</label>
+          <select id="tz-offset">
+            <option value="-5">UTC-5 (Acre)</option>
+            <option value="-4">UTC-4 (Manaus, AM)</option>
+            <option value="-3" selected>UTC-3 (Brasília, SP, RJ)</option>
+            <option value="-2">UTC-2</option>
+            <option value="0">UTC+0</option>
+          </select>
+        </div>
+        <button class="btn btn-p btn-sm" onclick="saveTz()">💾 Salvar fuso horário</button>
+      </div>
+
       <!-- Capacidade -->
       <div class="card" style="max-width:700px">
         <div class="card-title">⚡ Capacidade do sistema</div>
@@ -946,8 +963,14 @@ async function loadSettings(){
   if(r.b2Bucket)document.getElementById('b2-bkt').value=r.b2Bucket;
   if(r.b2Endpoint)document.getElementById('b2-ep').value=r.b2Endpoint;
   if(r.b2PublicUrl)document.getElementById('b2-pub').value=r.b2PublicUrl;
+  if(r.timezoneOffset)document.getElementById('tz-offset').value=r.timezoneOffset;
   document.getElementById('def-cap').value=localStorage.getItem('def_caption')||'';
   document.getElementById('def-hash').value=localStorage.getItem('def_hashtags')||'';
+}
+async function saveTz(){
+  const offset=document.getElementById('tz-offset').value;
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({timezoneOffset:offset})});
+  toast('Fuso horário salvo! Offset UTC'+offset,'ok');
 }
 async function saveSettings(){
   const body={b2KeyId:document.getElementById('b2-kid').value.trim(),b2AppKey:document.getElementById('b2-key').value.trim(),b2Bucket:document.getElementById('b2-bkt').value.trim(),b2Endpoint:document.getElementById('b2-ep').value.trim(),b2PublicUrl:document.getElementById('b2-pub').value.trim()};
