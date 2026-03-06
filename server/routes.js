@@ -15,6 +15,17 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 // Mapa de progresso dos uploads em andamento
 const uploadProgress = new Map();
 
+// Lock por conta para evitar race condition no agendamento simultâneo
+const scheduleLocks = new Map();
+async function withScheduleLock(accountId, fn) {
+  while (scheduleLocks.get(accountId)) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  scheduleLocks.set(accountId, true);
+  try { return await fn(); }
+  finally { scheduleLocks.delete(accountId); }
+}
+
 // Converte hora local (string "HH:MM") para Date UTC considerando offset do servidor
 // O servidor roda em UTC — ajusta os horários salvos no banco (que estão em hora local do usuário)
 function localTimeToUTC(dateBase, h, m) {
@@ -352,21 +363,26 @@ async function processUpload(jobId, videoFiles, account, accountId, caption, has
     }
   }
 
-  // Registra no banco para cada ciclo
-  let slot = 0;
-  for (let cycle = 1; cycle <= numCycles; cycle++) {
-    for (const u of uploaded) {
-      if (u.error) { slot++; continue; }
-      const scheduledFor = scheduledDates[slot++];
-      try {
-        const video = db.insertVideo({ id: uuid(), accountId, username: account.username, originalName: u.originalname, batchName: batchName || u.originalname, b2Url: u.url, b2FileId: u.fileId, b2FileName: u.fileName, bytes: u.bytes, duration: 0, caption: caption || '', hashtags: hashtags || '', cycle, scheduledFor: scheduledFor.toISOString(), status: 'pendente' });
-        ig.scheduleVideo(video.id);
-      } catch(e) { console.error(`[DB] ❌ ${u.originalname} ciclo ${cycle}: ${e.message}`); }
-    }
-  }
-
+  // Registra no banco com lock para evitar race condition entre contas simultâneas
   const ok = uploaded.filter(u => !u.error).length;
-  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + (ok * numCycles) });
+  await withScheduleLock(accountId, async () => {
+    // Recalcula lastScheduled dentro do lock para pegar slots atualizados
+    const freshLastScheduled = getLastScheduledTime(accountId);
+    const freshDates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, eh, em, freshLastScheduled);
+
+    let slot = 0;
+    for (let cycle = 1; cycle <= numCycles; cycle++) {
+      for (const u of uploaded) {
+        if (u.error) { slot++; continue; }
+        const scheduledFor = freshDates[slot++];
+        try {
+          const video = db.insertVideo({ id: uuid(), accountId, username: account.username, originalName: u.originalname, batchName: batchName || u.originalname, b2Url: u.url, b2FileId: u.fileId, b2FileName: u.fileName, bytes: u.bytes, duration: 0, caption: caption || '', hashtags: hashtags || '', cycle, scheduledFor: scheduledFor.toISOString(), status: 'pendente' });
+          ig.scheduleVideo(video.id);
+        } catch(e) { console.error(`[DB] ❌ ${u.originalname} ciclo ${cycle}: ${e.message}`); }
+      }
+    }
+    db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + (ok * numCycles) });
+  });
 
   uploadProgress.set(jobId, {
     ...uploadProgress.get(jobId),
