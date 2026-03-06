@@ -586,19 +586,15 @@ function startUpload(files){
 
 async function runUpload(qid,files,params,acc){
   const total=files.length;
+  const PARALLEL=3; // 3 uploads simultâneos
   let done=0;
   updateQueue(qid,0,100,'Iniciando envio de '+total+' vídeo(s)...');
 
-  for(let i=0;i<files.length;i++){
-    const f=files[i];
-    const mb=(f.size/1024/1024).toFixed(1);
-    const isLast=(i===files.length-1);
-    updateQueue(qid,Math.round(i/total*100),100,(i+1)+'/'+total+' — '+f.name.slice(0,30)+' ('+mb+'MB)');
-
+  async function uploadOne(f,idx){
+    const isLast=(idx===files.length-1);
     try{
       const fd=new FormData();
       fd.append('videos',f);
-      // cycles e agendamento só no último arquivo para não duplicar
       fd.append('accountId',params.accountId);
       fd.append('caption',params.caption||'');
       fd.append('hashtags',params.hashtags||'');
@@ -607,35 +603,32 @@ async function runUpload(qid,files,params,acc){
       fd.append('isLastOfBatch',isLast?'true':'false');
 
       const r=await fetch('/api/videos/upload',{method:'POST',body:fd}).then(res=>res.json());
+      if(r.error) throw new Error(r.error);
 
-      if(r.error){
-        updateQueue(qid,0,100,'Erro: '+r.error,'error');
-        toast('Erro em '+f.name+': '+r.error,'er');
-        return;
-      }
-
-      // Polling B2 para este arquivo
       if(r.jobId){
         await new Promise(resolve=>{
           const t=setInterval(async()=>{
             try{
               const p=await fetch('/api/upload-progress/'+r.jobId).then(res=>res.json());
-              if(!p.found||p.status==='done'||p.status==='not_found'){
-                clearInterval(t);resolve();
-              }
+              if(!p.found||p.status==='done'||p.status==='not_found'){clearInterval(t);resolve();}
             }catch(e){clearInterval(t);resolve();}
           },1500);
         });
       }
-
       done++;
-      updateQueue(qid,Math.round(done/total*100),100,done+'/'+total+' vídeo(s) enviados ao B2 ✓');
-
+      updateQueue(qid,Math.round(done/total*100),100,done+'/'+total+' vídeo(s) enviados ✓');
     }catch(e){
-      updateQueue(qid,0,100,'Erro: '+e.message,'error');
-      toast('Erro no upload: '+e.message,'er');
-      return;
+      done++;
+      updateQueue(qid,Math.round(done/total*100),100,'Erro em '+f.name+': '+e.message,'error');
+      toast('Erro: '+e.message,'er');
     }
+  }
+
+  // Processa em lotes de PARALLEL simultâneos
+  for(let i=0;i<files.length;i+=PARALLEL){
+    const lote=Array.from({length:Math.min(PARALLEL,files.length-i)},(_,j)=>uploadOne(files[i+j],i+j));
+    await Promise.all(lote);
+    updateQueue(qid,Math.round(done/total*100),100,done+'/'+total+' vídeo(s) enviados ✓');
   }
 
   updateQueue(qid,100,100,done+'/'+total+' vídeo(s) agendados! ✓','done');
