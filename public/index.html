@@ -588,6 +588,7 @@ async function runUpload(qid,files,params,acc){
   const total=files.length;
   const PARALLEL=3; // 3 uploads simultâneos
   let done=0;
+  const batchId='batch_'+Date.now()+'_'+(acc.username||acc.label);
   updateQueue(qid,0,100,'Iniciando envio de '+total+' vídeo(s)...');
 
   async function uploadOne(f,idx){
@@ -613,7 +614,8 @@ async function runUpload(qid,files,params,acc){
           bytes:f.size,
           caption:params.caption||'',
           hashtags:params.hashtags||'',
-          batchName:params.batchName||'',
+          batchName:params.batchName||batchId,
+          batchId:batchId,
           cycles:isLast?params.cycles:'1',
           isLastOfBatch:isLast
         })
