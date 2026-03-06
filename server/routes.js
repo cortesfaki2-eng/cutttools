@@ -126,6 +126,7 @@ router.post('/accounts', async (req, res) => {
   const { accessToken, label, postsPerDay, startTime, endTime, intervalMode } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'Token obrigatório' });
   try {
+    console.log('[AddAccount] Token recebido:', accessToken.slice(0,20)+'... len='+accessToken.length);
     const info = await ig.fetchAccountFromToken(accessToken);
     const existing = db.getAccountByIgId(info.igAccountId);
     if (existing) return res.status(400).json({ error: `Conta @${info.username} já cadastrada` });
