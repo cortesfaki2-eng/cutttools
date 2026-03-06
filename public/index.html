@@ -267,6 +267,27 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
   </div>
 </div>
 
+<!-- MODAL: Editar Conta -->
+<div class="modal-bg" id="modalEditAcc">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modalEditAcc')">✕</button>
+    <h3>Editar Conta</h3>
+    <input type="hidden" id="ea-id">
+    <div class="field"><label>Label (apelido)</label><input id="ea-label" placeholder="Ex: Futebol..."></div>
+    <div class="field"><label>Vídeos por dia</label><input type="number" id="ea-ppd" min="1" max="100" oninput="updateEditPreview()"></div>
+    <div class="r2">
+      <div class="field"><label>Início da janela</label><input type="time" id="ea-st" oninput="updateEditPreview()"></div>
+      <div class="field"><label>Fim da janela</label><input type="time" id="ea-et" oninput="updateEditPreview()"></div>
+    </div>
+    <div id="editPreview" class="info-box bl" style="margin-bottom:10px"></div>
+    <div class="info-box ye">⚠️ Ao salvar, todos os vídeos pendentes serão <strong>reagendados</strong> respeitando a nova janela.</div>
+    <div class="btn-row">
+      <button class="btn btn-g" onclick="closeModal('modalEditAcc')">Cancelar</button>
+      <button class="btn btn-p" id="editAccBtn" onclick="saveEditAccount()">💾 Salvar e reagendar</button>
+    </div>
+  </div>
+</div>
+
 <!-- LAYOUT -->
 <aside class="sidebar">
   <div class="sb-header">
@@ -696,8 +717,9 @@ async function loadAccounts(){
       +'<div class="acc-status '+(hasErr?'err':'')+'">● '+(hasErr?'com erros':'ativo')+'</div>'
       +'</div></div>'
       +'<div class="acc-card-actions">'
-      +'<button title="Testar conexão" onclick="testAccount(\''+a.id+'\')">🔗</button>'
-      +'<button class="del" title="Remover conta" onclick="delAccount(\''+a.id+'\')">🗑</button>'
+      +'<button title="Editar" onclick="openEditAccount(\''+a.id+'\')" >✏️</button>'
+      +'<button title="Testar conexão" onclick="testAccount(\''+a.id+'\')" >🔗</button>'
+      +'<button class="del" title="Remover conta" onclick="delAccount(\''+a.id+'\')" >🗑</button>'
       +'</div></div>'
       +'<div class="acc-info-row"><span class="acc-info-lbl">Postados</span><span class="acc-info-val" style="color:var(--gr)">'+(c.postado||0)+'</span></div>'
       +'<div class="acc-info-row"><span class="acc-info-lbl">Pendentes</span><span class="acc-info-val" style="color:var(--ye)">'+(c.pendente||0)+'</span></div>'
@@ -754,6 +776,40 @@ async function addAccount(){
     else toast('Erro: '+r.error,'er');
   }catch(e){toast('Erro: '+e.message,'er');}
   btn.disabled=false;btn.innerHTML='✅ Verificar e adicionar';
+}
+
+
+function openEditAccount(id){
+  const a=accounts.find(a=>a.id===id);if(!a)return;
+  document.getElementById('ea-id').value=a.id;
+  document.getElementById('ea-label').value=a.label||'';
+  document.getElementById('ea-ppd').value=a.postsPerDay||40;
+  document.getElementById('ea-st').value=a.startTime||'02:00';
+  document.getElementById('ea-et').value=a.endTime||'23:00';
+  updateEditPreview();
+  openModal('modalEditAcc');
+}
+function updateEditPreview(){
+  const ppd=parseInt(document.getElementById('ea-ppd').value)||40;
+  const st=document.getElementById('ea-st').value||'02:00';
+  const et=document.getElementById('ea-et').value||'23:00';
+  const [sh,sm]=st.split(':').map(Number);
+  const [eh,em]=et.split(':').map(Number);
+  const w=(eh*60+em)-(sh*60+sm);
+  const iv=ppd>1?Math.floor(w/(ppd-1)):w;
+  document.getElementById('editPreview').textContent='Intervalo: '+iv+' min * '+ppd+' posts/dia em janela de '+w+' min';
+}
+async function saveEditAccount(){
+  const id=document.getElementById('ea-id').value;
+  const body={label:document.getElementById('ea-label').value.trim(),postsPerDay:document.getElementById('ea-ppd').value,startTime:document.getElementById('ea-st').value,endTime:document.getElementById('ea-et').value};
+  const btn=document.getElementById('editAccBtn');
+  btn.disabled=true;btn.innerHTML='Salvando...';
+  try{
+    const r=await fetch('/api/accounts/'+id+'/reschedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+    if(r.success){toast('Conta atualizada! '+r.rescheduled+' videos reagendados.','ok');closeModal('modalEditAcc');loadAccounts();}
+    else toast('Erro: '+r.error,'er');
+  }catch(e){toast('Erro: '+e.message,'er');}
+  btn.disabled=false;btn.innerHTML='Salvar e reagendar';
 }
 
 async function testAccount(id){
