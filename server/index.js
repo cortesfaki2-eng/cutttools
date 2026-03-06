@@ -17,14 +17,12 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, '../public/index.ht
 async function start() {
   await db.init();
 
-  // Seed B2 settings from env vars (Railway)
   if (process.env.B2_KEY_ID) db.setSetting('b2KeyId', process.env.B2_KEY_ID);
   if (process.env.B2_APP_KEY) db.setSetting('b2AppKey', process.env.B2_APP_KEY);
   if (process.env.B2_BUCKET) db.setSetting('b2Bucket', process.env.B2_BUCKET);
   if (process.env.B2_ENDPOINT) db.setSetting('b2Endpoint', process.env.B2_ENDPOINT);
   if (process.env.B2_PUBLIC_URL) db.setSetting('b2PublicUrl', process.env.B2_PUBLIC_URL);
 
-  // Configurar B2 após DB estar pronto
   const b2 = require('./b2');
   const s = db.getAllSettings();
   if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
@@ -32,11 +30,15 @@ async function start() {
   }
 
   const stats = db.getStats();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`\n✂️  CutTools v4.1 rodando em http://localhost:${PORT}`);
     console.log(`   Contas: ${stats.accounts} | Posts: ${stats.total} | Pendentes: ${stats.pendente}\n`);
     ig.restoreJobs();
   });
+
+  server.timeout = 60 * 60 * 1000;
+  server.keepAliveTimeout = 65 * 1000;
+  server.headersTimeout = 66 * 1000;
 }
 
 start().catch(err => { console.error('Erro ao iniciar:', err); process.exit(1); });
