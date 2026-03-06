@@ -780,7 +780,7 @@ function updateIntervalPreview(){
 updateIntervalPreview();
 
 async function addAccount(){
-  const token=document.getElementById('aa-token').value.trim();
+  const token=document.getElementById('aa-token').value.replace(/\s+/g,'').trim();
   const label=document.getElementById('aa-label').value.trim();
   const ppd=document.getElementById('aa-ppd').value;
   const st=document.getElementById('aa-st').value;
