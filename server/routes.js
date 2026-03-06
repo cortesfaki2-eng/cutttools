@@ -61,13 +61,16 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
       current.setDate(current.getDate() + 1);
       current.setHours(startH, startM, 0, 0);
     } else {
-      current = new Date(current.getTime() + intervalMinutes * 60000);
-      const endOfDay = new Date(current); endOfDay.setHours(endH, endM, 0, 0);
-      if (current > endOfDay) {
+      const next = new Date(current.getTime() + intervalMinutes * 60000);
+      const nextMins = next.getHours() * 60 + next.getMinutes();
+      const endMins = endH * 60 + endM;
+      if (nextMins >= endMins) {
         slotInDay = 0;
-        current = new Date(current);
+        current = new Date(next);
         current.setDate(current.getDate() + 1);
         current.setHours(startH, startM, 0, 0);
+      } else {
+        current = next;
       }
     }
   }
@@ -163,18 +166,15 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
 
   function nextSlot(c) {
     const next = new Date(c.getTime() + intervalMins * 60000);
-    // Verifica se passou do fim da janela neste mesmo dia
-    const endToday = new Date(next);
-    endToday.setHours(eh, em, 0, 0);
-    if (next > endToday) {
-      // Pula pro inicio da janela do dia seguinte
+    const nextMins = next.getHours() * 60 + next.getMinutes();
+    const endMins = eh * 60 + em;
+    if (nextMins >= endMins) {
       const d = new Date(next);
       d.setDate(d.getDate() + 1);
       d.setHours(sh, sm, 0, 0);
-      slotInDay = 0;
-      return d;
+      return { date: d, resetSlot: true };
     }
-    return next;
+    return { date: next, resetSlot: false };
   }
 
   for (const video of pending) {
@@ -182,14 +182,15 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
     ig.scheduleVideo(video.id);
     slotInDay++;
     if (slotInDay >= ppd) {
-      // Atingiu limite diario — pula pro dia seguinte
       slotInDay = 0;
       const d = new Date(current);
       d.setDate(d.getDate() + 1);
       d.setHours(sh, sm, 0, 0);
       current = d;
     } else {
-      current = nextSlot(current);
+      const { date, resetSlot } = nextSlot(current);
+      if (resetSlot) slotInDay = 0;
+      current = date;
     }
   }
 
