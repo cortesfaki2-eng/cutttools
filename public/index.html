@@ -865,7 +865,7 @@ async function loadVideos(){
   document.getElementById('pendCount').textContent=counts.pendente||0;const el=document.getElementById('videosList');
   if(!videos.length){el.innerHTML='<div class="empty"><div class="empty-icon">🎬</div><p>Nenhum vídeo</p></div>';return;}
   const ic={pendente:'⏰',processando:'🔄',postado:'✅',erro:'❌',cancelado:'🚫'};const sc={pendente:'b-pend',processando:'b-proc',postado:'b-post',erro:'b-erro',cancelado:'b-canc'};
-  el.innerHTML=videos.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">${ic[v.status]||'⏰'}</span><div style="min-width:0"><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}${v.cycle>1?' · ciclo '+v.cycle:''}</div>${v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,70)+'</div>':''}</div></div><div class="video-right"><div style="text-align:right"><span class="badge ${sc[v.status]}">${v.status}</span><div class="video-date">${v.status==='postado'?'✓ '+fmtDT(v.postedAt):fmtDT(v.scheduledFor)}</div></div><div class="video-actions">${v.status==='erro'?'<button class="icon-btn" onclick="retryVideo(\''+v.id+'\')">↺</button>':''}${v.status==='pendente'?'<button class="icon-btn" onclick="pubNow(\''+v.id+'\')">▶</button>':''}<button class="icon-btn danger" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>`).join('');
+  el.innerHTML=videos.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">${ic[v.status]||'⏰'}</span><div style="min-width:0"><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}${v.cycle>1?' · ciclo '+v.cycle:''}</div>${v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,120)+'</div>':''}</div></div><div class="video-right"><div style="text-align:right"><span class="badge ${sc[v.status]}">${v.status}</span><div class="video-date">${v.status==='postado'?'✓ '+fmtDT(v.postedAt):fmtDT(v.scheduledFor)}</div></div><div class="video-actions">${v.b2Url?'<button class="icon-btn" title="Copiar URL do vídeo" onclick="copyVideoUrl(\''+v.b2Url+'\',this)">🔗</button>':''}${v.status==='erro'?'<button class="icon-btn" onclick="retryVideo(\''+v.id+'\')">↺</button>':''}${v.status==='pendente'?'<button class="icon-btn" onclick="pubNow(\''+v.id+'\')">▶</button>':''}<button class="icon-btn danger" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>`).join('');
 }
 async function cancelPending(){const accId=document.getElementById('accFilter').value;const r=await api('/api/videos/cancel-pending'+(accId!=='all'?'?accountId='+accId:''),{method:'POST'});toast((r.cancelled||0)+' cancelados','wa');loadVideos();}
 async function retryVideo(id){await api('/api/videos/'+id+'/retry',{method:'POST'});toast('Reagendado','ok');loadVideos();}
@@ -1013,6 +1013,25 @@ async function saveEditAccount(){
     }
     closeModal('modalEditAcc');loadAccounts();
   }finally{btn.disabled=false;btn.textContent='💾 Salvar alterações';}
+}
+
+function copyVideoUrl(url, btn) {
+  if (!url) { toast('URL não disponível', 'er'); return; }
+  navigator.clipboard.writeText(url).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    btn.style.color = 'var(--gr)';
+    toast('URL copiada!', 'ok');
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 2000);
+  }).catch(() => {
+    // fallback para browsers sem clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('URL copiada!', 'ok');
+  });
 }
 
 async function appInit(){
