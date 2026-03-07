@@ -334,6 +334,17 @@ function getLastPostedPerAccount(userId=null, isAdmin=false) {
   return map;
 }
 
+function getLastPendingPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, MAX(scheduled_for) as last FROM videos WHERE status='pendente'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => { map[r.account_id] = r.last; });
+  return map;
+}
+
 function getPostedTodayCount(userId=null, isAdmin=false, today) {
   let sql = "SELECT COUNT(*) as cnt FROM videos WHERE status='postado' AND DATE(posted_at)=?";
   const p = [today];
@@ -352,5 +363,5 @@ module.exports = {
   getSetting, setSetting, getAllSettings,
   getAccounts, getAccountById, getAccountByIgId, getAccountByIdForUser, insertAccount, updateAccount, deleteAccount,
   getVideos, getVideoCounts, getVideoById, getPendingVideos, insertVideo, updateVideo, deleteVideo, cancelPendingVideos, getStats,
-  getVideoCountsPerAccount, getNextScheduledPerAccount, getLastPostedPerAccount, getPostedTodayCount
+  getVideoCountsPerAccount, getNextScheduledPerAccount, getLastPostedPerAccount, getLastPendingPerAccount, getPostedTodayCount
 };
