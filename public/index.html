@@ -223,6 +223,14 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .dash-acc-next{margin-top:9px;padding-top:7px;border-top:1px solid var(--b1);font-size:10px;color:var(--tx3)}
 .dash-acc-next span{color:var(--p2);font-weight:600}
 .dash-acc-times{margin-top:8px;padding-top:7px;border-top:1px solid var(--b1)}
+.dash-daily{margin-top:8px;padding-top:7px;border-top:1px solid var(--b1)}
+.dash-daily-title{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--tx3);margin-bottom:5px}
+.dash-daily-grid{display:flex;flex-direction:column;gap:3px;max-height:130px;overflow-y:auto}
+.dash-daily-row{display:flex;align-items:center;gap:6px;font-size:10px}
+.dash-daily-date{color:var(--tx2);width:72px;flex-shrink:0}
+.dash-daily-bar{flex:1;height:4px;background:var(--bg);border-radius:100px;overflow:hidden}
+.dash-daily-fill{height:100%;background:var(--ye);border-radius:100px}
+.dash-daily-cnt{color:var(--ye);font-weight:700;width:22px;text-align:right;flex-shrink:0}
 .dash-acc-time-row{display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:2px 0}
 .dash-time-lbl{color:var(--tx3)}
 .dash-time-val{color:var(--p2);font-weight:600}
@@ -875,6 +883,7 @@ async function loadDash(){
         <div class="dash-acc-time-row"><span class="dash-time-lbl">✅ Último post</span><span class="dash-time-val">${a.lastPosted?fmtDT(a.lastPosted):'—'}</span></div>
         <div class="dash-acc-time-row"><span class="dash-time-lbl">📅 Fim da fila</span><span class="dash-time-val" style="color:var(--ye)">${a.lastPending?fmtDT(a.lastPending):'—'}</span></div>
       </div>
+      ${renderDailySchedule(a.dailySchedule)}
     </div>`;
   }).join('')+'</div>';}
   // Lista de próximos
@@ -882,8 +891,6 @@ async function loadDash(){
   if(!next.length){el.innerHTML='<div class="empty"><div class="empty-icon">📅</div><p>Nenhum post agendado</p></div>';return;}
   el.innerHTML=next.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">⏰</span><div><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}</div></div></div><div class="video-right"><div><span class="badge b-pend">pendente</span><div class="video-date">${fmtDT(v.scheduledFor)}</div></div></div></div>`).join('');
 }
-
-// Accounts
 async function loadAccounts(){
   const [data, statsArr] = await Promise.all([api('/api/accounts'), api('/api/accounts/stats')]);
   accounts=data;updateSbAccounts();
@@ -1132,6 +1139,27 @@ async function pollProcessing(){
   }
   toRemove.forEach(id=>_pollIds.delete(id));
   if(!_pollIds.size){clearInterval(_pollTimer);_pollTimer=null;}
+}
+
+function renderDailySchedule(dailySchedule) {
+  const ds = dailySchedule || {};
+  const days = Object.keys(ds).sort();
+  if (!days.length) return '';
+  const maxCnt = Math.max(...days.map(d => ds[d]), 1);
+  const rows = days.map(d => {
+    const cnt = ds[d];
+    const pct = Math.round(cnt / maxCnt * 100);
+    const dateStr = new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', weekday:'short'});
+    return '<div class="dash-daily-row">'
+      + '<span class="dash-daily-date">' + dateStr + '</span>'
+      + '<div class="dash-daily-bar"><div class="dash-daily-fill" style="width:' + pct + '%"></div></div>'
+      + '<span class="dash-daily-cnt">' + cnt + '</span>'
+      + '</div>';
+  }).join('');
+  return '<div class="dash-daily">'
+    + '<div class="dash-daily-title">📅 Agendados por dia</div>'
+    + '<div class="dash-daily-grid">' + rows + '</div>'
+    + '</div>';
 }
 
 function copyVideoUrl(url, btn) {
