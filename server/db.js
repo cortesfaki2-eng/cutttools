@@ -295,6 +295,52 @@ function getStats(userId=null, isAdmin=false) {
 function mapA(r) { if(!r)return null; return{id:r.id,accessToken:r.access_token,igAccountId:r.ig_account_id,username:r.username,label:r.label,accountType:r.account_type,postsPerDay:r.posts_per_day,startTime:r.start_time,endTime:r.end_time,intervalMinutes:r.interval_minutes,intervalMode:r.interval_mode,status:r.status,totalPosts:r.total_posts,addedAt:r.added_at,updatedAt:r.updated_at}; }
 function mapV(r) { if(!r)return null; return{id:r.id,accountId:r.account_id,username:r.username,originalName:r.original_name,batchName:r.batch_name,b2Url:r.b2_url,cloudinaryUrl:r.b2_url,b2FileId:r.b2_file_id,b2FileName:r.b2_file_name,bytes:r.bytes,duration:r.duration,caption:r.caption,hashtags:r.hashtags,cycle:r.cycle,scheduledFor:r.scheduled_for,status:r.status,igPostId:r.ig_post_id,postedAt:r.posted_at,errorMsg:r.error_msg,retries:r.retries,createdAt:r.created_at,updatedAt:r.updated_at}; }
 
+
+// ── Dashboard helpers (queries únicas, sem N+1) ──────────────────
+function getVideoCountsPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, status, COUNT(*) as cnt FROM videos WHERE 1=1";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id, status";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => {
+    if (!map[r.account_id]) map[r.account_id] = { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 };
+    map[r.account_id][r.status] = r.cnt;
+    map[r.account_id].todos += r.cnt;
+  });
+  return map;
+}
+
+function getNextScheduledPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, MIN(scheduled_for) as next FROM videos WHERE status='pendente'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => { map[r.account_id] = r.next; });
+  return map;
+}
+
+function getLastPostedPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, MAX(posted_at) as last FROM videos WHERE status='postado'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => { map[r.account_id] = r.last; });
+  return map;
+}
+
+function getPostedTodayCount(userId=null, isAdmin=false, today) {
+  let sql = "SELECT COUNT(*) as cnt FROM videos WHERE status='postado' AND DATE(posted_at)=?";
+  const p = [today];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  return (get(sql, p) || { cnt: 0 }).cnt;
+}
+
 module.exports = {
   init, persist,
   // Auth (NOVO)
@@ -305,5 +351,6 @@ module.exports = {
   // Original
   getSetting, setSetting, getAllSettings,
   getAccounts, getAccountById, getAccountByIgId, getAccountByIdForUser, insertAccount, updateAccount, deleteAccount,
-  getVideos, getVideoCounts, getVideoById, getPendingVideos, insertVideo, updateVideo, deleteVideo, cancelPendingVideos, getStats
+  getVideos, getVideoCounts, getVideoById, getPendingVideos, insertVideo, updateVideo, deleteVideo, cancelPendingVideos, getStats,
+  getVideoCountsPerAccount, getNextScheduledPerAccount, getLastPostedPerAccount, getPostedTodayCount
 };
