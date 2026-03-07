@@ -659,6 +659,7 @@ router.get('/dashboard', (req, res) => {
     endTime: a.endTime,
     intervalMinutes: a.intervalMinutes,
     status: a.status,
+    categoryId: a.categoryId || null,
     counts: counts[a.id] || { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 },
     nextScheduled: nextMap[a.id] || null,
     lastPosted: lastMap[a.id] || null,
