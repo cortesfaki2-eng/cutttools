@@ -142,6 +142,21 @@ router.get('/admin/activity', authMiddleware, adminMiddleware, (req, res) => {
   res.json(logs);
 });
 
+// Overview dos usuários com stats de vídeos e contas (para painel admin)
+router.get('/admin/users-overview', authMiddleware, adminMiddleware, (req, res) => {
+  const users = db.getAllUsers();
+  const result = users.map(u => {
+    const accounts = db.getAccounts(u.id, false);
+    const counts = db.getVideoCounts(null, u.id, false);
+    return {
+      ...u,
+      accountCount: accounts.length,
+      videoStats: counts,
+    };
+  });
+  res.json(result);
+});
+
 // Stats do admin
 router.get('/admin/stats', authMiddleware, adminMiddleware, (req, res) => {
   const users = db.getAllUsers();
