@@ -345,13 +345,16 @@ function getLastPendingPerAccount(userId=null, isAdmin=false) {
   return map;
 }
 
-function getDailySchedulePerAccount(userId=null, isAdmin=false) {
-  // Retorna contagem de vídeos pendentes por conta por dia
-  // { accountId: { 'YYYY-MM-DD': count, ... }, ... }
-  let sql = "SELECT account_id, DATE(scheduled_for) as day, COUNT(*) as cnt FROM videos WHERE status='pendente'";
+function getDailySchedulePerAccount(userId=null, isAdmin=false, offsetHours=-3) {
+  // Retorna contagem de vídeos pendentes por conta por dia NO HORÁRIO LOCAL
+  // DATE(scheduled_for) usa UTC — ajustar com o offset do usuário
+  const sign = offsetHours >= 0 ? '+' : '-';
+  const absH = Math.abs(offsetHours);
+  const offsetExpr = `datetime(scheduled_for, '${sign}${absH} hours')`;
+  let sql = \`SELECT account_id, DATE(\${offsetExpr}) as day, COUNT(*) as cnt FROM videos WHERE status='pendente'\`;
   const p = [];
   if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
-  sql += " GROUP BY account_id, DATE(scheduled_for) ORDER BY day ASC";
+  sql += \` GROUP BY account_id, DATE(\${offsetExpr}) ORDER BY day ASC\`;
   const rows = all(sql, p);
   const map = {};
   rows.forEach(r => {
