@@ -715,12 +715,17 @@ async function runUploadPresign(qid,files,params,acc){
       ).then(r=>r.json());
       if(presign.error)throw new Error(presign.error);
 
+      // Usar o contentType que o servidor assinou — deve ser idêntico ao do presign
+      const signedCtype = presign.contentType || ctype;
       const putResp=await fetch(presign.uploadUrl,{
         method:'PUT',body:f,
-        headers:{'Content-Type':ctype},
+        headers:{'Content-Type':signedCtype},
         signal:ctrl.signal
       });
-      if(!putResp.ok)throw new Error('B2 '+putResp.status);
+      if(!putResp.ok){
+        const errTxt=await putResp.text().catch(()=>'');
+        throw new Error('R2 '+putResp.status+(errTxt?' — '+errTxt.slice(0,120):''));
+      }
 
       uploadDone++;
       updateQueue(qid,uploadDone,total,`↑ ${uploadDone}/${total} enviados`,'uploading',{current:f.name});
