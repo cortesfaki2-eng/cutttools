@@ -298,7 +298,7 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <button class="nav-item act" id="n-dash" onclick="nav('dash')"><span class="icon">📊</span> Dashboard</button>
     <button class="nav-item" id="n-accounts" onclick="nav('accounts')"><span class="icon">📱</span> Configurar contas</button>
     <button class="nav-item" id="n-videos" onclick="nav('videos')"><span class="icon">🎬</span> Postar vídeos</button>
-    <button class="nav-item" id="n-settings" onclick="nav('settings')"><span class="icon">⚙️</span> Configurações</button>
+    <button class="nav-item" id="n-settings" onclick="nav('settings')" style="display:none"><span class="icon">⚙️</span> Configurações</button>
   </nav>
   <!-- ADMIN NAV (só aparece para admins) -->
   <div id="adminNav" style="display:none">
@@ -371,12 +371,13 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
       <div id="videosList"></div>
     </div>
     <!-- SETTINGS --><div class="panel" id="panel-settings">
-      <div class="card" style="max-width:620px">
-        <div class="card-title">🟠 Backblaze B2</div>
+      <div id="settingsAdminOnly" class="info-box ye" style="display:none;max-width:620px;margin-bottom:16px">🔒 As configurações de armazenamento são gerenciadas pelo administrador.</div>
+      <div id="settingsForm" class="card" style="max-width:620px">
+        <div class="card-title">🟠 Backblaze B2 / Cloudflare R2</div>
         <div class="info-box bl" style="margin-bottom:14px"><strong>Como configurar:</strong><br>1. Crie conta em <a href="https://backblaze.com" target="_blank" style="color:var(--bl)">backblaze.com</a><br>2. Buckets → Create a Bucket (Public)<br>3. App Keys → Add Key → copie keyID e applicationKey<br>4. No bucket: Endpoint S3</div>
         <div class="r2"><div class="field"><label>Key ID</label><input id="b2-kid"></div><div class="field"><label>Application Key</label><input type="password" id="b2-key"></div></div>
         <div class="r2"><div class="field"><label>Bucket Name</label><input id="b2-bkt"></div><div class="field"><label>Endpoint S3</label><input id="b2-ep"></div></div>
-        <div class="field"><label>URL Pública</label><input id="b2-pub"><div class="hint">Formato: https://f00X.backblazeb2.com/file/BUCKET</div></div>
+        <div class="field"><label>URL Pública</label><input id="b2-pub"><div class="hint">Formato: https://pub-xxx.r2.dev</div></div>
         <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar</button>
       </div>
     </div>
@@ -472,6 +473,8 @@ function enterApp() {
   document.getElementById('sbUserName').textContent = currentUser.name;
   document.getElementById('sbUserRole').textContent = currentUser.role === 'admin' ? '🔒 Administrador' : 'Usuário';
   document.getElementById('adminNav').style.display = currentUser.role === 'admin' ? 'block' : 'none';
+  // Settings só visível para admin
+  document.getElementById('n-settings').style.display = currentUser.role === 'admin' ? 'flex' : 'none';
   appInit();
 }
 
@@ -614,7 +617,19 @@ async function pubNow(id){if(!confirm('Publicar agora?'))return;await api('/api/
 async function delVideo(id){await api('/api/videos/'+id,{method:'DELETE'});loadVideos();}
 
 // Settings
-async function loadSettings(){const r=await api('/api/settings');if(r.b2KeyId)document.getElementById('b2-kid').value=r.b2KeyId;if(r.b2AppKey)document.getElementById('b2-key').value=r.b2AppKey;if(r.b2Bucket)document.getElementById('b2-bkt').value=r.b2Bucket;if(r.b2Endpoint)document.getElementById('b2-ep').value=r.b2Endpoint;if(r.b2PublicUrl)document.getElementById('b2-pub').value=r.b2PublicUrl;}
+async function loadSettings(){
+  const r=await api('/api/settings');
+  const isAdm = currentUser && currentUser.role === 'admin';
+  document.getElementById('settingsAdminOnly').style.display = isAdm ? 'none' : 'block';
+  document.getElementById('settingsForm').style.display = isAdm ? 'block' : 'none';
+  if(isAdm){
+    if(r.b2KeyId)document.getElementById('b2-kid').value=r.b2KeyId;
+    if(r.b2AppKey)document.getElementById('b2-key').value=r.b2AppKey;
+    if(r.b2Bucket)document.getElementById('b2-bkt').value=r.b2Bucket;
+    if(r.b2Endpoint)document.getElementById('b2-ep').value=r.b2Endpoint;
+    if(r.b2PublicUrl)document.getElementById('b2-pub').value=r.b2PublicUrl;
+  }
+}
 async function saveSettings(){const body={b2KeyId:document.getElementById('b2-kid').value.trim(),b2AppKey:document.getElementById('b2-key').value.trim(),b2Bucket:document.getElementById('b2-bkt').value.trim(),b2Endpoint:document.getElementById('b2-ep').value.trim(),b2PublicUrl:document.getElementById('b2-pub').value.trim()};if(!body.b2KeyId||!body.b2Bucket){toast('Preencha Key ID e Bucket','er');return;}await api('/api/settings',{method:'POST',body:JSON.stringify(body)});toast('✅ Salvo!','ok');}
 
 // ═══ ADMIN PANEL ═══
