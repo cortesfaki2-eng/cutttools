@@ -209,6 +209,10 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .dash-bar-val{font-size:10px;font-weight:700;width:26px;text-align:right;flex-shrink:0}
 .dash-acc-next{margin-top:9px;padding-top:7px;border-top:1px solid var(--b1);font-size:10px;color:var(--tx3)}
 .dash-acc-next span{color:var(--p2);font-weight:600}
+.dash-acc-times{margin-top:8px;padding-top:7px;border-top:1px solid var(--b1)}
+.dash-acc-time-row{display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:2px 0}
+.dash-time-lbl{color:var(--tx3)}
+.dash-time-val{color:var(--p2);font-weight:600}
 /* Preset captions */
 .preset-item{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--s2);border:1px solid var(--b1);border-radius:8px;cursor:pointer;transition:border-color .15s;margin-bottom:5px}
 .preset-item:hover{border-color:var(--p)}
@@ -641,11 +645,21 @@ function startUpload(files){
   toast('Upload iniciado para @'+(acc.username||acc.label),'ok');runUploadInBackground(qid,files,params,acc);
 }
 async function runUploadInBackground(qid,files,params,acc){
-  const BATCH=10;let done=0;const total=files.length;
+  const BATCH=5;let done=0;const total=files.length;
   for(let i=0;i<files.length;i+=BATCH){
-    const batch=files.slice(i,i+BATCH);const fd=new FormData();batch.forEach(f=>fd.append('videos',f));Object.entries(params).forEach(([k,v])=>fd.append(k,v));
+    const batch=files.slice(i,i+BATCH);
+    const fd=new FormData();
+    batch.forEach(f=>fd.append('videos',f));
+    Object.entries(params).forEach(([k,v])=>{if(v!==undefined&&v!==null)fd.append(k,String(v));});
     updateQueue(qid,done,total,'Enviando '+(i+1)+'–'+Math.min(i+BATCH,total)+' de '+total);
-    try{const r=await fetch('/api/videos/upload',{method:'POST',body:fd,headers:{'Authorization':'Bearer '+authToken}}).then(r=>r.json());done+=batch.length;if(r.error){updateQueue(qid,done,total,'Erro: '+r.error,'error');return;}}catch(e){updateQueue(qid,done,total,'Erro de rede','error');return;}
+    try{
+      const resp=await fetch('/api/videos/upload',{method:'POST',body:fd,headers:{'Authorization':'Bearer '+authToken}});
+      if(!resp.ok){const txt=await resp.text();updateQueue(qid,done,total,'Erro HTTP '+resp.status+': '+txt.slice(0,80),'error');return;}
+      const r=await resp.json();
+      done+=batch.length;
+      if(r.error){updateQueue(qid,done,total,'Erro: '+r.error,'error');return;}
+      if(r.results){const errs=r.results.filter(x=>x.error);if(errs.length)console.warn('[Upload] erros parciais:',errs);}
+    }catch(e){updateQueue(qid,done,total,'Erro: '+e.message,'error');return;}
   }
   updateQueue(qid,total,total,total+' vídeo(s) agendados!','done');toast('✅ @'+(acc.username||acc.label)+': '+total+' agendados!','ok');
   if(document.getElementById('panel-videos').classList.contains('act'))loadVideos();
@@ -663,19 +677,37 @@ async function loadDash(){
   document.getElementById('ds-today').textContent=(tr.videos||[]).length;
   // Per-account stats cards
   const accEl=document.getElementById('dashAccStats');
+  // Buscar próximo e último post por conta
+  const [pendAll, postedAll] = await Promise.all([
+    api('/api/videos?status=pendente&limit=9999'),
+    api('/api/videos?status=postado&limit=9999')
+  ]);
+  const nextByAcc={}, lastByAcc={};
+  (pendAll.videos||[]).forEach(v=>{
+    if(!nextByAcc[v.accountId]||new Date(v.scheduledFor)<new Date(nextByAcc[v.accountId]))
+      nextByAcc[v.accountId]=v.scheduledFor;
+  });
+  (postedAll.videos||[]).forEach(v=>{
+    if(!lastByAcc[v.accountId]||new Date(v.postedAt||v.scheduledFor)>new Date(lastByAcc[v.accountId]))
+      lastByAcc[v.accountId]=v.postedAt||v.scheduledFor;
+  });
   if(!accStats||!accStats.length){accEl.innerHTML='<div class="empty"><div class="empty-icon">📱</div><p>Nenhuma conta cadastrada</p></div>';}
   else{accEl.innerHTML='<div class="dash-acc-grid">'+accStats.map(a=>{
-    const c=a.counts||{};const tot=Math.max(c.total||0,1);
-    const pPost=Math.round((c.postado||0)/tot*100),pPend=Math.round((c.pendente||0)/tot*100),pErr=Math.round((c.erro||0)/tot*100);
+    const c=a.counts||{};const tot=c.total||0;const base=Math.max(tot,1);
+    const pPost=Math.round((c.postado||0)/base*100),pPend=Math.round((c.pendente||0)/base*100),pErr=Math.round((c.erro||0)/base*100);
+    const nextDt=nextByAcc[a.id],lastDt=lastByAcc[a.id];
     return `<div class="dash-acc-card">
       <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div><div class="dash-acc-name">@${a.username||a.label}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div></div>
       <div class="dash-acc-bars">
         <div class="dash-bar-row"><span class="dash-bar-lbl">✅ Postados</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPost}%;background:var(--gr)"></div></div><span class="dash-bar-val c-g">${c.postado||0}</span></div>
         <div class="dash-bar-row"><span class="dash-bar-lbl">⏰ Pendentes</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPend}%;background:var(--ye)"></div></div><span class="dash-bar-val c-y">${c.pendente||0}</span></div>
         <div class="dash-bar-row"><span class="dash-bar-lbl">❌ Erros</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pErr}%;background:var(--rd)"></div></div><span class="dash-bar-val c-r">${c.erro||0}</span></div>
-        <div class="dash-bar-row"><span class="dash-bar-lbl">📦 Total</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:100%;background:var(--p)"></div></div><span class="dash-bar-val c-p">${c.total||0}</span></div>
+        <div class="dash-bar-row"><span class="dash-bar-lbl">📦 Total</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${tot>0?100:0}%;background:var(--p)"></div></div><span class="dash-bar-val c-p">${tot}</span></div>
       </div>
-      ${a.nextScheduled?`<div class="dash-acc-next">Próximo: <span>${fmtDT(a.nextScheduled)}</span></div>`:'<div class="dash-acc-next">Sem posts agendados</div>'}
+      <div class="dash-acc-times">
+        <div class="dash-acc-time-row"><span class="dash-time-lbl">⏰ Próximo</span><span class="dash-time-val">${nextDt?fmtDT(nextDt):'—'}</span></div>
+        <div class="dash-acc-time-row"><span class="dash-time-lbl">✅ Último</span><span class="dash-time-val">${lastDt?fmtDT(lastDt):'—'}</span></div>
+      </div>
     </div>`;
   }).join('')+'</div>';}
   // Next posts list
@@ -690,7 +722,7 @@ async function loadAccounts(){
   if(!accounts.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta</p></div>';return;}
   const vr=await api('/api/videos?limit=99999');const byAcc={};
   (vr.videos||[]).forEach(v=>{if(!byAcc[v.accountId])byAcc[v.accountId]={total:0,postado:0,pendente:0,erro:0};byAcc[v.accountId].total++;byAcc[v.accountId][v.status]=(byAcc[v.accountId][v.status]||0)+1;});
-  grid.innerHTML=accounts.map(a=>{const c=byAcc[a.id]||{total:0};return `<div class="acc-card"><div class="acc-card-top"><div class="acc-card-left"><div class="acc-avatar">📷</div><div><div class="acc-username">@${a.username||a.label}</div><span class="acc-badge intel">⚡ ${a.intervalMode||'inteligente'}</span><div class="acc-status" style="margin-top:2px">● active</div></div></div><div class="acc-card-actions"><button title="Testar" onclick="testAccount('${a.id}')">🔗</button><button class="del" title="Remover" onclick="delAccount('${a.id}')">🗑</button></div></div><div class="acc-info-row"><span class="acc-info-lbl">Posts:</span><span class="acc-info-val">${c.total||0}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Janela:</span><span class="acc-info-val">${a.startTime}-${a.endTime}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Vídeos/dia:</span><span class="acc-info-val">${a.postsPerDay}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Intervalo:</span><span class="acc-info-val">${a.intervalMinutes}min</span></div></div>`;}).join('');
+  grid.innerHTML=accounts.map(a=>{const c=byAcc[a.id]||{total:0};return `<div class="acc-card"><div class="acc-card-top"><div class="acc-card-left"><div class="acc-avatar">📷</div><div><div class="acc-username">@${a.username||a.label}</div><span class="acc-badge intel">⚡ ${a.intervalMode||'inteligente'}</span><div class="acc-status" style="margin-top:2px">● active</div></div></div><div class="acc-card-actions"><button title="Testar" onclick="testAccount('${a.id}')">🔗</button><button title="Editar" onclick="openEditAccount('${a.id}')">✏️</button><button class="del" title="Remover" onclick="delAccount('${a.id}')">🗑</button></div></div><div class="acc-info-row"><span class="acc-info-lbl">Posts:</span><span class="acc-info-val">${c.total||0}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Janela:</span><span class="acc-info-val">${a.startTime}-${a.endTime}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Vídeos/dia:</span><span class="acc-info-val">${a.postsPerDay}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Intervalo:</span><span class="acc-info-val">${a.intervalMinutes}min</span></div></div>`;}).join('');
 }
 function updateSbAccounts(){document.getElementById('sbAccsList').innerHTML=accounts.map(a=>`<div class="sb-acc-item" onclick="nav('accounts')"><div class="sb-acc-av">${(a.username||'?')[0].toUpperCase()}</div><div><div class="sb-acc-name">@${a.username||a.label}</div><div class="sb-acc-handle">${a.postsPerDay}×/dia</div></div></div>`).join('');}
 function selMode(mode){currentMode=mode;document.getElementById('mode-intel').classList.toggle('sel',mode==='inteligente');document.getElementById('mode-manual').classList.toggle('sel',mode==='manual');updateIntervalPreview();}
@@ -801,13 +833,67 @@ async function loadAdminActivity(){
 function fmtDT(iso){if(!iso)return'—';const d=new Date(iso);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function refreshAll(){const a=document.querySelector('.panel.act')?.id?.replace('panel-','');if(a)nav(a);}
 
+function openEditAccount(id){
+  const a=accounts.find(x=>x.id===id);if(!a)return;
+  document.getElementById('ea-id').value=a.id;
+  document.getElementById('ea-label').value=a.label||a.username||'';
+  document.getElementById('ea-st').value=a.startTime||'02:00';
+  document.getElementById('ea-et').value=a.endTime||'23:00';
+  document.getElementById('ea-ppd').value=a.postsPerDay||40;
+  updateEaPreview();
+  openModal('modalEditAcc');
+}
+function updateEaPreview(){
+  const ppd=parseInt(document.getElementById('ea-ppd').value)||1;
+  const st=document.getElementById('ea-st').value||'02:00';
+  const et=document.getElementById('ea-et').value||'23:00';
+  const[sh,sm]=st.split(':').map(Number);const[eh,em]=et.split(':').map(Number);
+  const w=(eh*60+em)-(sh*60+sm);
+  const iv=ppd>1?Math.floor(w/(ppd-1)):w;
+  document.getElementById('eaIntervalPreview').textContent='Intervalo: '+iv+'min · Janela: '+w+'min';
+}
+['ea-ppd','ea-st','ea-et'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',updateEaPreview);});
+async function saveEditAccount(){
+  const id=document.getElementById('ea-id').value;
+  const label=document.getElementById('ea-label').value.trim();
+  const startTime=document.getElementById('ea-st').value;
+  const endTime=document.getElementById('ea-et').value;
+  const postsPerDay=parseInt(document.getElementById('ea-ppd').value)||40;
+  if(!id){toast('Erro: conta não encontrada','er');return;}
+  const r=await api('/api/accounts/'+id,{method:'PUT',body:JSON.stringify({label,startTime,endTime,postsPerDay})});
+  if(r.success){toast('✅ Conta atualizada!','ok');closeModal('modalEditAcc');loadAccounts();}
+  else toast('Erro: '+(r.error||'desconhecido'),'er');
+}
+
 async function appInit(){
+  accounts=[];updateSbAccounts(); // limpa sidebar antes de buscar
   const data=await api('/api/accounts');accounts=data;updateSbAccounts();
   await loadCaptionPresets();
   loadDash();
 }
 setInterval(()=>{if(!currentUser)return;const a=document.querySelector('.panel.act')?.id;if(a==='panel-dash')loadDash();if(a==='panel-videos')loadVideos();},30000);
 </script>
+
+
+<!-- MODAL: Editar Conta -->
+<div class="modal-bg" id="modalEditAcc">
+  <div class="modal" style="max-width:480px">
+    <button class="modal-close" onclick="closeModal('modalEditAcc')">✕</button>
+    <h3>✏️ Editar Conta</h3>
+    <input type="hidden" id="ea-id">
+    <div class="field"><label>Label / Apelido</label><input id="ea-label" placeholder="Nome de identificação"></div>
+    <div class="r2">
+      <div class="field"><label>Início da janela</label><input type="time" id="ea-st" value="02:00"></div>
+      <div class="field"><label>Fim da janela</label><input type="time" id="ea-et" value="23:00"></div>
+    </div>
+    <div class="field"><label>Vídeos por dia</label><input type="number" id="ea-ppd" min="1" max="200" value="40"></div>
+    <div id="eaIntervalPreview" class="info-box bl" style="margin-bottom:4px"></div>
+    <div class="btn-row">
+      <button class="btn btn-g" onclick="closeModal('modalEditAcc')">Cancelar</button>
+      <button class="btn btn-p" onclick="saveEditAccount()">💾 Salvar alterações</button>
+    </div>
+  </div>
+</div>
 
 <!-- MODAL: Legenda -->
 <div class="modal-bg" id="modalCaption">
