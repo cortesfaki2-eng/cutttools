@@ -68,6 +68,9 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .queue-fill{height:100%;border-radius:100px;transition:width .4s}
 .queue-status{font-size:10px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .queue-status.done{color:var(--gr)}.queue-status.err{color:var(--rd)}
+.queue-file{font-size:10px;color:var(--p2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;margin-top:1px}
+.queue-errs{font-size:10px;color:var(--ye);margin-top:1px}
+.queue-pct.ok{color:var(--gr)}.queue-pct.er{color:var(--rd)}
 .queue-cancel{position:absolute;top:7px;right:7px;background:none;border:none;color:var(--tx3);cursor:pointer;font-size:11px;opacity:0;transition:opacity .15s}
 .queue-item:hover .queue-cancel{opacity:1}
 .sb-accounts{border-top:1px solid var(--b1);padding:10px 8px;margin-top:auto}
@@ -574,17 +577,38 @@ function nav(page){
 }
 
 // Upload Queue
-function addToQueue(id,accountName,total){uploadQueue.push({id,accountName,total,done:0,status:'uploading',label:'Iniciando...'});renderQueue();}
-function updateQueue(id,done,total,label,status){const q=uploadQueue.find(q=>q.id===id);if(!q)return;q.done=done;q.total=total;q.label=label;if(status)q.status=status;renderQueue();}
+function addToQueue(id,accountName,total){uploadQueue.push({id,accountName,total,done:0,status:'uploading',label:'Iniciando...',current:null,errs:0});renderQueue();}
+function updateQueue(id,done,total,label,status,meta){
+  const q=uploadQueue.find(q=>q.id===id);if(!q)return;
+  q.done=done;q.total=total;q.label=label;
+  if(status)q.status=status;
+  if(meta){if(meta.current)q.current=meta.current;if(meta.error)q.errs=(q.errs||0)+1;}
+  renderQueue();
+}
 function removeFromQueue(id){uploadQueue=uploadQueue.filter(q=>q.id!==id);renderQueue();}
 function renderQueue(){
   const active=uploadQueue.filter(q=>q.status==='uploading').length;
   document.getElementById('sbQueue').style.display=uploadQueue.length?'block':'none';
   document.getElementById('queueCount').textContent=active||'';
   document.getElementById('queueList').innerHTML=uploadQueue.map(q=>{
-    const pct=q.total>0?Math.round(q.done/q.total*100):0;const isDone=q.status==='done',isErr=q.status==='error';
-    const fill=isErr?'var(--rd)':isDone?'var(--gr)':'linear-gradient(90deg,var(--p),var(--p2))';
-    return `<div class="queue-item"><div class="queue-item-top"><div class="queue-acc">@${q.accountName}</div><div class="queue-pct">${isDone?'✓':isErr?'✗':pct+'%'}</div></div><div class="queue-bar"><div class="queue-fill" style="width:${isDone?100:pct}%;background:${fill}"></div></div><div class="queue-status ${isDone?'done':isErr?'err':''}">${q.label}</div>${isDone||isErr?`<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`:''}</div>`;
+    const pct=q.total>0?Math.round(q.done/q.total*100):0;
+    const isDone=q.status==='done',isErr=q.status==='error';
+    const hasErrs=q.errs>0;
+    const fill=isErr?'var(--rd)':isDone?(hasErrs?'var(--ye)':'var(--gr)'):'linear-gradient(90deg,var(--p),var(--p2))';
+    const pctLabel=isDone?(hasErrs?'⚠':'✓'):isErr?'✗':(pct+'%');
+    const currentFile=q.current?`<div class="queue-file">${q.current}</div>`:'';
+    const errsLine=q.errs>0?`<div class="queue-errs">${q.errs} erro(s)</div>`:'';
+    const statusLabel=isDone||isErr
+      ? q.label
+      : `${q.done}/${q.total} · ${pct}%`;
+    return `<div class="queue-item">
+      <div class="queue-item-top"><div class="queue-acc">@${q.accountName}</div><div class="queue-pct ${isDone&&!hasErrs?'ok':isErr||hasErrs?'er':''}">${pctLabel}</div></div>
+      <div class="queue-bar"><div class="queue-fill" style="width:${isDone||isErr?100:pct}%;background:${fill}"></div></div>
+      ${currentFile}
+      <div class="queue-status ${isDone?'done':isErr?'err':''}">${statusLabel}</div>
+      ${errsLine}
+      ${isDone||isErr?`<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`:''}
+    </div>`;
   }).join('');
 }
 
@@ -645,26 +669,53 @@ function startUpload(files){
   toast('Upload iniciado para @'+(acc.username||acc.label),'ok');runUploadInBackground(qid,files,params,acc);
 }
 async function runUploadInBackground(qid,files,params,acc){
-  const BATCH=5;let done=0;const total=files.length;
-  for(let i=0;i<files.length;i+=BATCH){
-    const batch=files.slice(i,i+BATCH);
+  let done=0,errs=0;const total=files.length;
+  for(let i=0;i<files.length;i++){
+    const f=files[i];
+    const sizeMB=(f.size/1024/1024).toFixed(1);
+    updateQueue(qid,i,total,
+      `Enviando ${i+1}/${total}: <b>${f.name}</b> (${sizeMB} MB)`,
+      'uploading', {current:f.name, sizeMB, idx:i+1});
     const fd=new FormData();
-    batch.forEach(f=>fd.append('videos',f));
+    fd.append('videos',f);
     Object.entries(params).forEach(([k,v])=>{if(v!==undefined&&v!==null)fd.append(k,String(v));});
-    updateQueue(qid,done,total,'Enviando '+(i+1)+'–'+Math.min(i+BATCH,total)+' de '+total);
     try{
       const resp=await fetch('/api/videos/upload',{method:'POST',body:fd,headers:{'Authorization':'Bearer '+authToken}});
-      if(!resp.ok){const txt=await resp.text();updateQueue(qid,done,total,'Erro HTTP '+resp.status+': '+txt.slice(0,80),'error');return;}
+      if(!resp.ok){
+        const txt=await resp.text();
+        errs++;
+        updateQueue(qid,i+1,total,
+          `Erro ${i+1}/${total}: ${f.name} — HTTP ${resp.status}`,
+          'uploading', {current:f.name,error:true});
+        continue;
+      }
       const r=await resp.json();
-      done+=batch.length;
-      if(r.error){updateQueue(qid,done,total,'Erro: '+r.error,'error');return;}
-      if(r.results){const errs=r.results.filter(x=>x.error);if(errs.length)console.warn('[Upload] erros parciais:',errs);}
-    }catch(e){updateQueue(qid,done,total,'Erro: '+e.message,'error');return;}
+      if(r.error){
+        errs++;
+        updateQueue(qid,i+1,total,
+          `Erro ${i+1}/${total}: ${f.name} — ${r.error}`,
+          'uploading', {current:f.name,error:true});
+        continue;
+      }
+      done++;
+    }catch(e){
+      errs++;
+      updateQueue(qid,i+1,total,
+        `Erro ${i+1}/${total}: ${f.name} — ${e.message}`,
+        'uploading', {current:f.name,error:true});
+      continue;
+    }
   }
-  updateQueue(qid,total,total,total+' vídeo(s) agendados!','done');toast('✅ @'+(acc.username||acc.label)+': '+total+' agendados!','ok');
+  const msg=errs>0
+    ? `${done} agendados, ${errs} com erro`
+    : `${done} vídeo(s) agendados com sucesso!`;
+  updateQueue(qid,total,total,msg, errs>0&&done===0?'error':'done');
+  toast(errs===0?'✅ @'+(acc.username||acc.label)+': '+done+' agendados!'
+    :'⚠️ @'+(acc.username||acc.label)+': '+done+' ok, '+errs+' erros',
+    errs===0?'ok':'wa');
   if(document.getElementById('panel-videos').classList.contains('act'))loadVideos();
   if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
-  setTimeout(()=>removeFromQueue(qid),30000);
+  setTimeout(()=>removeFromQueue(qid),60000);
 }
 
 // Dashboard
@@ -833,13 +884,28 @@ async function loadAdminActivity(){
 function fmtDT(iso){if(!iso)return'—';const d=new Date(iso);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 function refreshAll(){const a=document.querySelector('.panel.act')?.id?.replace('panel-','');if(a)nav(a);}
 
-function openEditAccount(id){
+let _eaPendingCount=0;
+async function openEditAccount(id){
   const a=accounts.find(x=>x.id===id);if(!a)return;
   document.getElementById('ea-id').value=a.id;
   document.getElementById('ea-label').value=a.label||a.username||'';
   document.getElementById('ea-st').value=a.startTime||'02:00';
   document.getElementById('ea-et').value=a.endTime||'23:00';
   document.getElementById('ea-ppd').value=a.postsPerDay||40;
+  document.getElementById('ea-reschedule').checked=false;
+  // Buscar pendentes da conta
+  try{
+    const vr=await api('/api/videos?accountId='+id+'&status=pendente&limit=99999');
+    _eaPendingCount=(vr.videos||[]).length;
+    const box=document.getElementById('eaRescheduleBox');
+    const info=document.getElementById('eaPendingInfo');
+    if(_eaPendingCount>0){
+      box.style.display='block';
+      info.textContent=_eaPendingCount+' vídeo(s) pendente(s) agendados com a janela atual ('+a.startTime+'–'+a.endTime+', '+a.postsPerDay+'×/dia).';
+    } else {
+      box.style.display='none';
+    }
+  }catch(e){_eaPendingCount=0;document.getElementById('eaRescheduleBox').style.display='none';}
   updateEaPreview();
   openModal('modalEditAcc');
 }
@@ -849,20 +915,40 @@ function updateEaPreview(){
   const et=document.getElementById('ea-et').value||'23:00';
   const[sh,sm]=st.split(':').map(Number);const[eh,em]=et.split(':').map(Number);
   const w=(eh*60+em)-(sh*60+sm);
+  if(w<=0){document.getElementById('eaIntervalPreview').textContent='⚠️ Janela inválida';return;}
   const iv=ppd>1?Math.floor(w/(ppd-1)):w;
-  document.getElementById('eaIntervalPreview').textContent='Intervalo: '+iv+'min · Janela: '+w+'min';
+  const daysFor=_eaPendingCount>0?Math.ceil(_eaPendingCount/ppd):null;
+  document.getElementById('eaIntervalPreview').textContent=
+    'Intervalo: '+iv+'min · Janela: '+Math.floor(w/60)+'h'+String(w%60).padStart(2,'0')+'min'
+    +(daysFor?' · '+_eaPendingCount+' pendentes = ~'+daysFor+' dia(s) para zerar':'');
 }
-['ea-ppd','ea-st','ea-et'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('input',updateEaPreview);});
 async function saveEditAccount(){
   const id=document.getElementById('ea-id').value;
   const label=document.getElementById('ea-label').value.trim();
   const startTime=document.getElementById('ea-st').value;
   const endTime=document.getElementById('ea-et').value;
   const postsPerDay=parseInt(document.getElementById('ea-ppd').value)||40;
+  const doReschedule=document.getElementById('ea-reschedule').checked;
   if(!id){toast('Erro: conta não encontrada','er');return;}
-  const r=await api('/api/accounts/'+id,{method:'PUT',body:JSON.stringify({label,startTime,endTime,postsPerDay})});
-  if(r.success){toast('✅ Conta atualizada!','ok');closeModal('modalEditAcc');loadAccounts();}
-  else toast('Erro: '+(r.error||'desconhecido'),'er');
+  const btn=document.getElementById('eaSaveBtn');btn.disabled=true;btn.textContent='Salvando...';
+  try{
+    // Salvar configs
+    const r=await api('/api/accounts/'+id,{method:'PUT',body:JSON.stringify({label,startTime,endTime,postsPerDay})});
+    if(!r.success){toast('Erro: '+(r.error||'desconhecido'),'er');return;}
+    // Reagendar se solicitado
+    if(doReschedule&&_eaPendingCount>0){
+      btn.textContent='Reagendando...';
+      const rr=await api('/api/accounts/'+id+'/reschedule',{method:'POST',body:JSON.stringify({postsPerDay,startTime,endTime})});
+      if(rr.success){
+        toast('✅ Conta salva + '+rr.rescheduled+' vídeos reagendados!','ok');
+      } else {
+        toast('✅ Conta salva, mas erro ao reagendar: '+(rr.error||''),'wa');
+      }
+    } else {
+      toast('✅ Conta atualizada!','ok');
+    }
+    closeModal('modalEditAcc');loadAccounts();
+  }finally{btn.disabled=false;btn.textContent='💾 Salvar alterações';}
 }
 
 async function appInit(){
@@ -883,14 +969,27 @@ setInterval(()=>{if(!currentUser)return;const a=document.querySelector('.panel.a
     <input type="hidden" id="ea-id">
     <div class="field"><label>Label / Apelido</label><input id="ea-label" placeholder="Nome de identificação"></div>
     <div class="r2">
-      <div class="field"><label>Início da janela</label><input type="time" id="ea-st" value="02:00"></div>
-      <div class="field"><label>Fim da janela</label><input type="time" id="ea-et" value="23:00"></div>
+      <div class="field"><label>Início da janela</label><input type="time" id="ea-st" value="02:00" oninput="updateEaPreview()"></div>
+      <div class="field"><label>Fim da janela</label><input type="time" id="ea-et" value="23:00" oninput="updateEaPreview()"></div>
     </div>
-    <div class="field"><label>Vídeos por dia</label><input type="number" id="ea-ppd" min="1" max="200" value="40"></div>
-    <div id="eaIntervalPreview" class="info-box bl" style="margin-bottom:4px"></div>
+    <div class="field"><label>Vídeos por dia</label><input type="number" id="ea-ppd" min="1" max="200" value="40" oninput="updateEaPreview()"></div>
+    <div id="eaIntervalPreview" class="info-box bl" style="margin-bottom:12px"></div>
+    <div id="eaRescheduleBox" style="display:none">
+      <div style="border:1px solid var(--b1);border-radius:10px;padding:12px;margin-bottom:12px;background:var(--s2)">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--tx2)">📅 Vídeos pendentes</div>
+        <div id="eaPendingInfo" style="font-size:11px;color:var(--tx3);margin-bottom:10px"></div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;background:var(--bg);border-radius:8px;border:1px solid var(--b1)" id="eaRescheduleLbl">
+          <input type="checkbox" id="ea-reschedule" style="width:16px;height:16px;accent-color:var(--p2)">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--tx1)">Reagendar vídeos pendentes</div>
+            <div style="font-size:10px;color:var(--tx3);margin-top:1px">Redistribui os vídeos na nova janela, a partir de amanhã</div>
+          </div>
+        </label>
+      </div>
+    </div>
     <div class="btn-row">
       <button class="btn btn-g" onclick="closeModal('modalEditAcc')">Cancelar</button>
-      <button class="btn btn-p" onclick="saveEditAccount()">💾 Salvar alterações</button>
+      <button class="btn btn-p" id="eaSaveBtn" onclick="saveEditAccount()">💾 Salvar alterações</button>
     </div>
   </div>
 </div>
