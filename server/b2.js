@@ -84,10 +84,18 @@ function getContentType(ext) {
 
 async function getPresignedUploadUrl(key, contentType) {
   if (!isConfigured()) throw new Error('Storage não configurado');
-  const command = new PutObjectCommand({ Bucket: bucketName, Key: key, ContentType: contentType || 'video/mp4' });
+  const ct = contentType || 'video/mp4';
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ContentType: ct,
+    // Garante que o objeto fica com Content-Type correto no R2/B2
+    Metadata: { 'content-type': ct }
+  });
   const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
   const fileUrl = publicUrl ? publicUrl.replace(/\/$/, '') + '/' + key : uploadUrl.split('?')[0];
-  return { uploadUrl, fileUrl };
+  // Retorna também o contentType para o frontend usar no PUT (deve ser idêntico ao assinado)
+  return { uploadUrl, fileUrl, contentType: ct };
 }
 
 module.exports = { configure, isConfigured, uploadFile, deleteFile, getPresignedUploadUrl };
