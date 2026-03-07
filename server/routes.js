@@ -168,6 +168,25 @@ router.post('/videos/confirm', async (req, res) => {
   } catch(e) { console.error('[Confirm]', e.message); res.status(500).json({ error: e.message }); }
 });
 
+
+// ── UPLOAD-ONLY — faz upload pro R2 via servidor (garante ContentType correto) e retorna url+key
+router.post('/videos/upload-only', upload.single('videos'), async (req, res) => {
+  const { accountId } = req.body;
+  if (!accountId || !req.file) return res.status(400).json({ error: 'accountId e arquivo obrigatorios' });
+  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
+  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
+  configureB2FromDB();
+  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
+  try {
+    const uploaded = await b2.uploadFile(req.file.path, req.file.originalname, account.username);
+    fs.unlink(req.file.path, () => {});
+    res.json({ success: true, url: uploaded.url, key: uploaded.fileId, fileName: uploaded.fileName, bytes: uploaded.bytes });
+  } catch(e) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── CONFIRM-BATCH — recebe lote inteiro já ordenado, cria ciclos corretamente ──
 // Padrão de ciclos: 1-2-3-4-5-6 | 1-2-3-4-5-6 (intercalado, não em bloco)
 router.post('/videos/confirm-batch', async (req, res) => {
