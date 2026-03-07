@@ -454,6 +454,26 @@ router.get('/stats', (req, res) => {
   res.json(stats);
 });
 
+// Stats por conta (para cards do dashboard)
+router.get('/stats/by-account', (req, res) => {
+  const accounts = db.getAccounts(userId(req), isAdmin(req));
+  const result = accounts.map(a => {
+    const counts = db.getVideoCounts(a.id, userId(req), isAdmin(req));
+    return {
+      id: a.id,
+      username: a.username,
+      label: a.label,
+      postsPerDay: a.postsPerDay,
+      startTime: a.startTime,
+      endTime: a.endTime,
+      intervalMinutes: a.intervalMinutes,
+      status: a.status,
+      counts,
+    };
+  });
+  res.json(result);
+});
+
 router.get('/export/csv', (req, res) => {
   const { accountId } = req.query;
   const videos = db.getVideos({ accountId, limit: 99999, userId: userId(req), isAdmin: isAdmin(req) });
