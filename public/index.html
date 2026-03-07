@@ -73,6 +73,8 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .queue-pct.ok{color:var(--gr)}.queue-pct.er{color:var(--rd)}
 .queue-cancel{position:absolute;top:7px;right:7px;background:none;border:none;color:var(--tx3);cursor:pointer;font-size:11px;opacity:0;transition:opacity .15s}
 .queue-item:hover .queue-cancel{opacity:1}
+.queue-cancel-btn{display:block;width:100%;margin-top:6px;padding:4px 0;background:var(--rd2);border:1px solid var(--rd);border-radius:6px;color:var(--rd);font-size:10px;font-weight:600;cursor:pointer;text-align:center;transition:background .15s}
+.queue-cancel-btn:hover{background:var(--rd);color:#fff}
 .sb-accounts{border-top:1px solid var(--b1);padding:10px 8px;margin-top:auto}
 .sb-accounts-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);padding:0 10px;margin-bottom:8px}
 .sb-acc-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:7px;cursor:pointer;transition:background .15s}
@@ -592,22 +594,25 @@ function renderQueue(){
   document.getElementById('queueCount').textContent=active||'';
   document.getElementById('queueList').innerHTML=uploadQueue.map(q=>{
     const pct=q.total>0?Math.round(q.done/q.total*100):0;
-    const isDone=q.status==='done',isErr=q.status==='error';
-    const hasErrs=q.errs>0;
-    const fill=isErr?'var(--rd)':isDone?(hasErrs?'var(--ye)':'var(--gr)'):'linear-gradient(90deg,var(--p),var(--p2))';
-    const pctLabel=isDone?(hasErrs?'⚠':'✓'):isErr?'✗':(pct+'%');
-    const currentFile=q.current?`<div class="queue-file">${q.current}</div>`:'';
-    const errsLine=q.errs>0?`<div class="queue-errs">${q.errs} erro(s)</div>`:'';
-    const statusLabel=isDone||isErr
-      ? q.label
-      : `${q.done}/${q.total} · ${pct}%`;
+    const isDone=q.status==='done',isErr=q.status==='error',isCancelled=q.status==='cancelled';
+    const isActive=q.status==='uploading';
+    const hasErrs=(q.errs||0)>0;
+    const fill=isErr?'var(--rd)':isCancelled?'var(--tx3)':isDone?(hasErrs?'var(--ye)':'var(--gr)'):'linear-gradient(90deg,var(--p),var(--p2))';
+    const pctLabel=isDone?(hasErrs?'⚠':'✓'):isErr?'✗':isCancelled?'—':(pct+'%');
+    const currentFile=q.current&&isActive?`<div class="queue-file">↑ ${q.current}</div>`:'';
+    const errsLine=(q.errs||0)>0?`<div class="queue-errs">⚠ ${q.errs} erro(s)</div>`:'';
+    const statusLabel=isDone||isErr||isCancelled ? q.label : q.label||`${q.done}/${q.total}`;
+    // Botões de ação
+    const actions=isActive
+      ? `<button class="queue-cancel-btn" onclick="cancelUpload('${q.id}')" title="Cancelar upload">⏹ Cancelar</button>`
+      : `<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`;
     return `<div class="queue-item">
       <div class="queue-item-top"><div class="queue-acc">@${q.accountName}</div><div class="queue-pct ${isDone&&!hasErrs?'ok':isErr||hasErrs?'er':''}">${pctLabel}</div></div>
-      <div class="queue-bar"><div class="queue-fill" style="width:${isDone||isErr?100:pct}%;background:${fill}"></div></div>
+      <div class="queue-bar"><div class="queue-fill" style="width:${isDone||isErr||isCancelled?100:pct}%;background:${fill}"></div></div>
       ${currentFile}
-      <div class="queue-status ${isDone?'done':isErr?'err':''}">${statusLabel}</div>
+      <div class="queue-status ${isDone?'done':isErr||isCancelled?'err':''}">${statusLabel}</div>
       ${errsLine}
-      ${isDone||isErr?`<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`:''}
+      ${actions}
     </div>`;
   }).join('');
 }
@@ -661,58 +666,102 @@ if(dropArea){
 }
 if(vfi){vfi.addEventListener('change',e=>startUpload([...e.target.files]));}
 
+// Map de AbortControllers por qid para cancelamento
+const uploadAbortMap = new Map();
+
 function startUpload(files){
   if(!files.length)return;const accId=document.getElementById('up-acc').value;const acc=accounts.find(a=>a.id===accId);
   if(!accId||!acc){toast('Selecione uma conta','er');return;}
-  const qid='q_'+Date.now();const params={accountId:accId,batchName:document.getElementById('up-batch').value,caption:document.getElementById('up-cap').value,hashtags:document.getElementById('up-hash').value,cycles:document.getElementById('up-cycles').value};
+  const qid='q_'+Date.now();
+  const params={accountId:accId,batchName:document.getElementById('up-batch').value,caption:document.getElementById('up-cap').value,hashtags:document.getElementById('up-hash').value,cycles:document.getElementById('up-cycles').value};
   closeModal('modalUpload');vfi.value='';addToQueue(qid,acc.username||acc.label,files.length);
-  toast('Upload iniciado para @'+(acc.username||acc.label),'ok');runUploadInBackground(qid,files,params,acc);
+  toast('Upload iniciado para @'+(acc.username||acc.label),'ok');
+  runUploadPresign(qid,files,params,acc);
 }
-async function runUploadInBackground(qid,files,params,acc){
-  let done=0,errs=0;const total=files.length;
-  for(let i=0;i<files.length;i++){
-    const f=files[i];
+
+function cancelUpload(qid){
+  const ctrl=uploadAbortMap.get(qid);
+  if(ctrl){ctrl.abort();uploadAbortMap.delete(qid);}
+  updateQueue(qid,0,0,'Cancelado pelo usuário','cancelled');
+  setTimeout(()=>removeFromQueue(qid),4000);
+}
+
+// Upload via presign: frontend → B2 direto, sem passar pelo servidor
+async function runUploadPresign(qid,files,params,acc){
+  const PARALLEL=3; // 3 uploads simultâneos
+  let done=0,errs=0,cancelled=false;
+  const total=files.length;
+  const ctrl=new AbortController();
+  uploadAbortMap.set(qid,ctrl);
+
+  const batchId='b_'+Date.now();
+  const fileList=[...files].map((f,i)=>({f,i,isLast:i===files.length-1}));
+
+  // Função para upload de 1 arquivo
+  async function uploadOne({f,i,isLast}){
+    if(cancelled||ctrl.signal.aborted)return;
     const sizeMB=(f.size/1024/1024).toFixed(1);
-    updateQueue(qid,i,total,
-      `Enviando ${i+1}/${total}: <b>${f.name}</b> (${sizeMB} MB)`,
-      'uploading', {current:f.name, sizeMB, idx:i+1});
-    const fd=new FormData();
-    fd.append('videos',f);
-    Object.entries(params).forEach(([k,v])=>{if(v!==undefined&&v!==null)fd.append(k,String(v));});
+    updateQueue(qid,done,total,`${done+errs+1}/${total} · ${f.name} (${sizeMB}MB)`,'uploading',{current:f.name});
     try{
-      const resp=await fetch('/api/videos/upload',{method:'POST',body:fd,headers:{'Authorization':'Bearer '+authToken}});
-      if(!resp.ok){
-        const txt=await resp.text();
-        errs++;
-        updateQueue(qid,i+1,total,
-          `Erro ${i+1}/${total}: ${f.name} — HTTP ${resp.status}`,
-          'uploading', {current:f.name,error:true});
-        continue;
-      }
-      const r=await resp.json();
-      if(r.error){
-        errs++;
-        updateQueue(qid,i+1,total,
-          `Erro ${i+1}/${total}: ${f.name} — ${r.error}`,
-          'uploading', {current:f.name,error:true});
-        continue;
-      }
+      // 1. Pedir URL presignada ao servidor
+      const ext=f.name.split('.').pop();
+      const presign=await fetch(`/api/videos/presign?filename=${encodeURIComponent(f.name)}&accountId=${params.accountId}&contentType=video/${ext}`,
+        {headers:{'Authorization':'Bearer '+authToken},signal:ctrl.signal}).then(r=>r.json());
+      if(presign.error)throw new Error(presign.error);
+
+      // 2. Upload direto para B2 (sem passar pelo servidor)
+      const putResp=await fetch(presign.uploadUrl,{
+        method:'PUT',
+        body:f,
+        headers:{'Content-Type':'video/'+ext},
+        signal:ctrl.signal
+      });
+      if(!putResp.ok)throw new Error('B2 HTTP '+putResp.status);
+
+      // 3. Confirmar no servidor (registra no DB e agenda)
+      const confirmResp=await fetch('/api/videos/confirm',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},
+        body:JSON.stringify({
+          accountId:params.accountId,
+          key:presign.key,
+          publicFileUrl:presign.publicFileUrl,
+          originalName:f.name,
+          bytes:f.size,
+          caption:params.caption||'',
+          hashtags:params.hashtags||'',
+          batchName:params.batchName||batchId,
+          batchId,
+          cycles:params.cycles||1,
+          isLastOfBatch:isLast
+        }),
+        signal:ctrl.signal
+      }).then(r=>r.json());
+      if(confirmResp.error)throw new Error(confirmResp.error);
       done++;
     }catch(e){
+      if(e.name==='AbortError'){cancelled=true;return;}
       errs++;
-      updateQueue(qid,i+1,total,
-        `Erro ${i+1}/${total}: ${f.name} — ${e.message}`,
-        'uploading', {current:f.name,error:true});
-      continue;
+      console.warn('[Upload] erro',f.name,e.message);
+      updateQueue(qid,done,total,`Erro: ${f.name} — ${e.message}`,'uploading',{current:f.name,error:true});
     }
+    if(!cancelled)updateQueue(qid,done+errs,total,
+      `${done+errs}/${total} · ${done} ok${errs>0?' · '+errs+' erros':''}`,'uploading',{current:f.name});
   }
-  const msg=errs>0
-    ? `${done} agendados, ${errs} com erro`
-    : `${done} vídeo(s) agendados com sucesso!`;
-  updateQueue(qid,total,total,msg, errs>0&&done===0?'error':'done');
+
+  // Processar em grupos de PARALLEL arquivos simultâneos
+  for(let i=0;i<fileList.length;i+=PARALLEL){
+    if(cancelled||ctrl.signal.aborted)break;
+    const batch=fileList.slice(i,i+PARALLEL);
+    await Promise.all(batch.map(uploadOne));
+  }
+
+  uploadAbortMap.delete(qid);
+  if(cancelled)return;
+  const msg=errs>0?`${done} agendados, ${errs} com erro`:`${done} vídeo(s) agendados!`;
+  updateQueue(qid,total,total,msg,errs>0&&done===0?'error':'done');
   toast(errs===0?'✅ @'+(acc.username||acc.label)+': '+done+' agendados!'
-    :'⚠️ @'+(acc.username||acc.label)+': '+done+' ok, '+errs+' erros',
-    errs===0?'ok':'wa');
+    :'⚠️ @'+(acc.username||acc.label)+': '+done+' ok, '+errs+' erros',errs===0?'ok':'wa');
   if(document.getElementById('panel-videos').classList.contains('act'))loadVideos();
   if(document.getElementById('panel-dash').classList.contains('act'))loadDash();
   setTimeout(()=>removeFromQueue(qid),60000);
@@ -720,33 +769,22 @@ async function runUploadInBackground(qid,files,params,acc){
 
 // Dashboard
 async function loadDash(){
-  const[sr,vr,accStats]=await Promise.all([api('/api/stats'),api('/api/videos?status=pendente&limit=8'),api('/api/stats/by-account')]);
-  document.getElementById('ds-total').textContent=sr.total||0;document.getElementById('ds-posted').textContent=sr.postado||0;
-  document.getElementById('ds-pending').textContent=sr.pendente||0;document.getElementById('ds-error').textContent=sr.erro||0;
-  document.getElementById('ds-accs').textContent=sr.accounts||0;document.getElementById('ds-proc').textContent=sr.activeJobs||0;
-  const today=new Date().toISOString().split('T')[0];const tr=await api('/api/videos?status=postado&date='+today);
-  document.getElementById('ds-today').textContent=(tr.videos||[]).length;
-  // Per-account stats cards
+  const d=await api('/api/dashboard');
+  const sr=d.stats||{};
+  document.getElementById('ds-total').textContent=sr.total||0;
+  document.getElementById('ds-posted').textContent=sr.postado||0;
+  document.getElementById('ds-pending').textContent=sr.pendente||0;
+  document.getElementById('ds-error').textContent=sr.erro||0;
+  document.getElementById('ds-accs').textContent=sr.accounts||0;
+  document.getElementById('ds-proc').textContent=sr.activeJobs||0;
+  document.getElementById('ds-today').textContent=d.todayCount||0;
+  // Cards por conta
   const accEl=document.getElementById('dashAccStats');
-  // Buscar próximo e último post por conta
-  const [pendAll, postedAll] = await Promise.all([
-    api('/api/videos?status=pendente&limit=9999'),
-    api('/api/videos?status=postado&limit=9999')
-  ]);
-  const nextByAcc={}, lastByAcc={};
-  (pendAll.videos||[]).forEach(v=>{
-    if(!nextByAcc[v.accountId]||new Date(v.scheduledFor)<new Date(nextByAcc[v.accountId]))
-      nextByAcc[v.accountId]=v.scheduledFor;
-  });
-  (postedAll.videos||[]).forEach(v=>{
-    if(!lastByAcc[v.accountId]||new Date(v.postedAt||v.scheduledFor)>new Date(lastByAcc[v.accountId]))
-      lastByAcc[v.accountId]=v.postedAt||v.scheduledFor;
-  });
-  if(!accStats||!accStats.length){accEl.innerHTML='<div class="empty"><div class="empty-icon">📱</div><p>Nenhuma conta cadastrada</p></div>';}
+  const accStats=d.accStats||[];
+  if(!accStats.length){accEl.innerHTML='<div class="empty"><div class="empty-icon">📱</div><p>Nenhuma conta cadastrada</p></div>';}
   else{accEl.innerHTML='<div class="dash-acc-grid">'+accStats.map(a=>{
     const c=a.counts||{};const tot=c.total||0;const base=Math.max(tot,1);
     const pPost=Math.round((c.postado||0)/base*100),pPend=Math.round((c.pendente||0)/base*100),pErr=Math.round((c.erro||0)/base*100);
-    const nextDt=nextByAcc[a.id],lastDt=lastByAcc[a.id];
     return `<div class="dash-acc-card">
       <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div><div class="dash-acc-name">@${a.username||a.label}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div></div>
       <div class="dash-acc-bars">
@@ -756,24 +794,28 @@ async function loadDash(){
         <div class="dash-bar-row"><span class="dash-bar-lbl">📦 Total</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${tot>0?100:0}%;background:var(--p)"></div></div><span class="dash-bar-val c-p">${tot}</span></div>
       </div>
       <div class="dash-acc-times">
-        <div class="dash-acc-time-row"><span class="dash-time-lbl">⏰ Próximo</span><span class="dash-time-val">${nextDt?fmtDT(nextDt):'—'}</span></div>
-        <div class="dash-acc-time-row"><span class="dash-time-lbl">✅ Último</span><span class="dash-time-val">${lastDt?fmtDT(lastDt):'—'}</span></div>
+        <div class="dash-acc-time-row"><span class="dash-time-lbl">⏰ Próximo</span><span class="dash-time-val">${a.nextScheduled?fmtDT(a.nextScheduled):'—'}</span></div>
+        <div class="dash-acc-time-row"><span class="dash-time-lbl">✅ Último</span><span class="dash-time-val">${a.lastPosted?fmtDT(a.lastPosted):'—'}</span></div>
       </div>
     </div>`;
   }).join('')+'</div>';}
-  // Next posts list
-  const next=vr.videos||[];const el=document.getElementById('dashNextList');
+  // Lista de próximos
+  const next=d.upcoming||[];const el=document.getElementById('dashNextList');
   if(!next.length){el.innerHTML='<div class="empty"><div class="empty-icon">📅</div><p>Nenhum post agendado</p></div>';return;}
   el.innerHTML=next.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">⏰</span><div><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}</div></div></div><div class="video-right"><div><span class="badge b-pend">pendente</span><div class="video-date">${fmtDT(v.scheduledFor)}</div></div></div></div>`).join('');
 }
 
 // Accounts
 async function loadAccounts(){
-  const data=await api('/api/accounts');accounts=data;updateSbAccounts();const grid=document.getElementById('accGrid');
+  const [data, statsArr] = await Promise.all([api('/api/accounts'), api('/api/accounts/stats')]);
+  accounts=data;updateSbAccounts();
+  const grid=document.getElementById('accGrid');
   if(!accounts.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta</p></div>';return;}
-  const vr=await api('/api/videos?limit=99999');const byAcc={};
-  (vr.videos||[]).forEach(v=>{if(!byAcc[v.accountId])byAcc[v.accountId]={total:0,postado:0,pendente:0,erro:0};byAcc[v.accountId].total++;byAcc[v.accountId][v.status]=(byAcc[v.accountId][v.status]||0)+1;});
-  grid.innerHTML=accounts.map(a=>{const c=byAcc[a.id]||{total:0};return `<div class="acc-card"><div class="acc-card-top"><div class="acc-card-left"><div class="acc-avatar">📷</div><div><div class="acc-username">@${a.username||a.label}</div><span class="acc-badge intel">⚡ ${a.intervalMode||'inteligente'}</span><div class="acc-status" style="margin-top:2px">● active</div></div></div><div class="acc-card-actions"><button title="Testar" onclick="testAccount('${a.id}')">🔗</button><button title="Editar" onclick="openEditAccount('${a.id}')">✏️</button><button class="del" title="Remover" onclick="delAccount('${a.id}')">🗑</button></div></div><div class="acc-info-row"><span class="acc-info-lbl">Posts:</span><span class="acc-info-val">${c.total||0}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Janela:</span><span class="acc-info-val">${a.startTime}-${a.endTime}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Vídeos/dia:</span><span class="acc-info-val">${a.postsPerDay}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Intervalo:</span><span class="acc-info-val">${a.intervalMinutes}min</span></div></div>`;}).join('');
+  const statsMap={};(statsArr||[]).forEach(s=>statsMap[s.id]=s);
+  grid.innerHTML=accounts.map(a=>{
+    const s=statsMap[a.id]||{};const c=s||{total:0};
+    return `<div class="acc-card"><div class="acc-card-top"><div class="acc-card-left"><div class="acc-avatar">📷</div><div><div class="acc-username">@${a.username||a.label}</div><span class="acc-badge intel">⚡ ${a.intervalMode||'inteligente'}</span><div class="acc-status" style="margin-top:2px">● active</div></div></div><div class="acc-card-actions"><button title="Testar" onclick="testAccount('${a.id}')">🔗</button><button title="Editar" onclick="openEditAccount('${a.id}')">✏️</button><button class="del" title="Remover" onclick="delAccount('${a.id}')">🗑</button></div></div><div class="acc-info-row"><span class="acc-info-lbl">Posts:</span><span class="acc-info-val">${c.todos||0}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Janela:</span><span class="acc-info-val">${a.startTime}-${a.endTime}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Vídeos/dia:</span><span class="acc-info-val">${a.postsPerDay}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Intervalo:</span><span class="acc-info-val">${a.intervalMinutes}min</span></div></div>`;
+  }).join('');
 }
 function updateSbAccounts(){document.getElementById('sbAccsList').innerHTML=accounts.map(a=>`<div class="sb-acc-item" onclick="nav('accounts')"><div class="sb-acc-av">${(a.username||'?')[0].toUpperCase()}</div><div><div class="sb-acc-name">@${a.username||a.label}</div><div class="sb-acc-handle">${a.postsPerDay}×/dia</div></div></div>`).join('');}
 function selMode(mode){currentMode=mode;document.getElementById('mode-intel').classList.toggle('sel',mode==='inteligente');document.getElementById('mode-manual').classList.toggle('sel',mode==='manual');updateIntervalPreview();}
