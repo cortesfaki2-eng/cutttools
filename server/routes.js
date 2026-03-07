@@ -169,6 +169,21 @@ router.post('/videos/confirm', async (req, res) => {
 });
 
 
+// ── PROGRESSO DE POSTAGEM — polling do frontend durante status 'processando'
+router.get('/videos/:id/progress', (req, res) => {
+  const video = db.getVideoById(req.params.id);
+  if (!video) return res.status(404).json({ error: 'Video nao encontrado' });
+  // errorMsg armazena '[pct%] msg' enquanto processando
+  let pct = 0, msg = '';
+  if (video.status === 'processando' && video.errorMsg) {
+    const m = video.errorMsg.match(/^\[(\d+)%\]\s*(.*)$/);
+    if (m) { pct = parseInt(m[1]); msg = m[2]; }
+    else msg = video.errorMsg;
+  } else if (video.status === 'postado') { pct = 100; msg = 'Publicado! ✅'; }
+  else if (video.status === 'erro') { pct = 0; msg = video.errorMsg || 'Erro'; }
+  res.json({ id: video.id, status: video.status, pct, msg, igPostId: video.igPostId });
+});
+
 // ── UPLOAD-ONLY — faz upload pro R2 via servidor (garante ContentType correto) e retorna url+key
 router.post('/videos/upload-only', upload.single('videos'), async (req, res) => {
   const { accountId } = req.body;
@@ -185,6 +200,16 @@ router.post('/videos/upload-only', upload.single('videos'), async (req, res) => 
     try { fs.unlinkSync(req.file.path); } catch {}
     res.status(500).json({ error: e.message });
   }
+});
+
+
+// ── STATUS DE VÍDEO — polling de progresso durante processamento ──
+router.get('/videos/:id/status', (req, res) => {
+  const v = db.getVideoById(req.params.id);
+  if (!v) return res.status(404).json({ error: 'not found' });
+  const acc = db.getAccountByIdForUser(v.accountId, userId(req), isAdmin(req));
+  if (!acc) return res.status(403).json({ error: 'forbidden' });
+  res.json({ id: v.id, status: v.status, errorMsg: v.errorMsg, igPostId: v.igPostId, postedAt: v.postedAt, updatedAt: v.updatedAt });
 });
 
 // ── CONFIRM-BATCH — recebe lote inteiro já ordenado, cria ciclos corretamente ──
