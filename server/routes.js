@@ -83,7 +83,7 @@ router.get('/accounts', (req, res) => {
 });
 
 router.post('/accounts', async (req, res) => {
-  const { accessToken, label, postsPerDay, startTime, endTime, intervalMode } = req.body;
+  const { accessToken, label, postsPerDay, startTime, endTime, intervalMode, categoryId } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'Token obrigatório' });
 
   try {
@@ -102,7 +102,7 @@ router.post('/accounts', async (req, res) => {
     const account = db.insertAccount({
       id: uuid(), userId: userId(req), accessToken, igAccountId: info.igAccountId, username: info.username,
       label: label || info.username, accountType: info.accountType,
-      postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins,
+      postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins, categoryId: categoryId||null,
       intervalMode: intervalMode || 'inteligente', status: 'active', totalPosts: 0,
     });
 
@@ -115,13 +115,13 @@ router.post('/accounts', async (req, res) => {
 router.put('/accounts/:id', (req, res) => {
   const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
   if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  const { label, postsPerDay, startTime, endTime, intervalMode, accessToken } = req.body;
+  const { label, postsPerDay, startTime, endTime, intervalMode, accessToken, categoryId } = req.body;
   const ppd = parseInt(postsPerDay);
   const [sh, sm] = (startTime||'02:00').split(':').map(Number);
   const [eh, em] = (endTime||'23:00').split(':').map(Number);
   const windowMins = (eh * 60 + em) - (sh * 60 + sm);
   const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
-  const patch = { label, postsPerDay: ppd, startTime, endTime, intervalMinutes: intervalMins, intervalMode };
+  const patch = { label, postsPerDay: ppd, startTime, endTime, intervalMinutes: intervalMins, intervalMode, categoryId: categoryId !== undefined ? (categoryId||null) : undefined };
   if (accessToken) patch.accessToken = accessToken;
   db.updateAccount(req.params.id, patch);
   res.json({ success: true });
@@ -281,6 +281,29 @@ router.post('/videos/confirm-batch', async (req, res) => {
   } catch(e) { console.error('[ConfirmBatch]', e.message); res.status(500).json({ error: e.message }); }
 });
 
+// ── CATEGORIAS ──────────────────────────────────────────────────────────
+router.get('/categories', (req, res) => {
+  res.json(db.getCategories(userId(req), isAdmin(req)));
+});
+
+router.post('/categories', (req, res) => {
+  const { name, color } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+  const cat = db.insertCategory({ id: uuid(), userId: userId(req), name: name.trim(), color: color || '#6c63ff' });
+  res.json(cat);
+});
+
+router.put('/categories/:id', (req, res) => {
+  const { name, color } = req.body;
+  db.updateCategory(req.params.id, { name, color });
+  res.json({ success: true });
+});
+
+router.delete('/categories/:id', (req, res) => {
+  db.deleteCategory(req.params.id);
+  res.json({ success: true });
+});
+
 // ── RESCHEDULE ────────────────────────────────────────────────────
 router.post('/accounts/:id/reschedule', async (req, res) => {
   const { label, postsPerDay, startTime, endTime } = req.body;
@@ -338,8 +361,13 @@ router.post('/accounts/:id/test', async (req, res) => {
 
 // ══ VIDEOS ════════════════════════════════════════════════════════
 router.get('/videos', (req, res) => {
-  const { accountId, status, date, limit = 300, offset = 0 } = req.query;
-  const videos = db.getVideos({ accountId, status, date, limit: parseInt(limit), offset: parseInt(offset), userId: userId(req), isAdmin: isAdmin(req) });
+  const { accountId, status, date, limit = 300, offset = 0, categoryId } = req.query;
+  let effectiveAccountId = accountId;
+  if (categoryId && categoryId !== 'all' && (!accountId || accountId === 'all')) {
+    const accs = db.getAccounts(userId(req), isAdmin(req)).filter(a => a.categoryId === categoryId);
+    effectiveAccountId = accs.length ? accs.map(a => a.id) : ['__none__'];
+  }
+  const videos = db.getVideos({ accountId: effectiveAccountId, status, date, limit: parseInt(limit), offset: parseInt(offset), userId: userId(req), isAdmin: isAdmin(req) });
   const counts = db.getVideoCounts(accountId, userId(req), isAdmin(req));
   res.json({ videos, counts });
 });
