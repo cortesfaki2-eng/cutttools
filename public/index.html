@@ -823,19 +823,24 @@ async function loadDash(){
   const accStats=d.accStats||[];
   if(!accStats.length){accEl.innerHTML='<div class="empty"><div class="empty-icon">📱</div><p>Nenhuma conta cadastrada</p></div>';}
   else{accEl.innerHTML='<div class="dash-acc-grid">'+accStats.map(a=>{
-    const c=a.counts||{};const tot=c.total||0;const base=Math.max(tot,1);
-    const pPost=Math.round((c.postado||0)/base*100),pPend=Math.round((c.pendente||0)/base*100),pErr=Math.round((c.erro||0)/base*100);
+    const c=a.counts||{};
+    const post=c.postado||0, pend=c.pendente||0, err=c.erro||0;
+    const tot=c.todos||0;
+    // Barras relativas ao maior valor entre os 3 (nunca > 100%, nunca dividir por 0)
+    const barMax=Math.max(post,pend,err,1);
+    const pPost=Math.round(post/barMax*100),pPend=Math.round(pend/barMax*100),pErr=Math.round(err/barMax*100);
     return `<div class="dash-acc-card">
       <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div><div class="dash-acc-name">@${a.username||a.label}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div></div>
       <div class="dash-acc-bars">
-        <div class="dash-bar-row"><span class="dash-bar-lbl">✅ Postados</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPost}%;background:var(--gr)"></div></div><span class="dash-bar-val c-g">${c.postado||0}</span></div>
-        <div class="dash-bar-row"><span class="dash-bar-lbl">⏰ Pendentes</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPend}%;background:var(--ye)"></div></div><span class="dash-bar-val c-y">${c.pendente||0}</span></div>
-        <div class="dash-bar-row"><span class="dash-bar-lbl">❌ Erros</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pErr}%;background:var(--rd)"></div></div><span class="dash-bar-val c-r">${c.erro||0}</span></div>
+        <div class="dash-bar-row"><span class="dash-bar-lbl">✅ Postados</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPost}%;background:var(--gr)"></div></div><span class="dash-bar-val c-g">${post}</span></div>
+        <div class="dash-bar-row"><span class="dash-bar-lbl">⏰ Pendentes</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPend}%;background:var(--ye)"></div></div><span class="dash-bar-val c-y">${pend}</span></div>
+        <div class="dash-bar-row"><span class="dash-bar-lbl">❌ Erros</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pErr}%;background:var(--rd)"></div></div><span class="dash-bar-val c-r">${err}</span></div>
         <div class="dash-bar-row"><span class="dash-bar-lbl">📦 Total</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${tot>0?100:0}%;background:var(--p)"></div></div><span class="dash-bar-val c-p">${tot}</span></div>
       </div>
       <div class="dash-acc-times">
         <div class="dash-acc-time-row"><span class="dash-time-lbl">⏰ Próximo</span><span class="dash-time-val">${a.nextScheduled?fmtDT(a.nextScheduled):'—'}</span></div>
-        <div class="dash-acc-time-row"><span class="dash-time-lbl">✅ Último</span><span class="dash-time-val">${a.lastPosted?fmtDT(a.lastPosted):'—'}</span></div>
+        <div class="dash-acc-time-row"><span class="dash-time-lbl">✅ Último post</span><span class="dash-time-val">${a.lastPosted?fmtDT(a.lastPosted):'—'}</span></div>
+        <div class="dash-acc-time-row"><span class="dash-time-lbl">📅 Fim da fila</span><span class="dash-time-val" style="color:var(--ye)">${a.lastPending?fmtDT(a.lastPending):'—'}</span></div>
       </div>
     </div>`;
   }).join('')+'</div>';}
