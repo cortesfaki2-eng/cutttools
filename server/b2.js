@@ -65,6 +65,32 @@ async function uploadFile(localPath, originalName, folder = 'videos') {
 }
 
 /**
+ * Faz upload de um Buffer para o R2/B2 (sem I/O de disco)
+ * @returns {{ url, fileId, fileName, bytes }}
+ */
+async function uploadBuffer(buffer, originalName, folder = 'videos') {
+  if (!isConfigured()) throw new Error('Storage não configurado.');
+  const ext = path.extname(originalName);
+  const fileName = `${folder}/${uuid()}${ext}`;
+  const contentType = getContentType(ext);
+
+  await client.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: fileName,
+    Body: buffer,
+    ContentType: contentType,
+    ContentLength: buffer.length, // obrigatório para stream/buffer no R2
+  }));
+
+  return {
+    url: `${publicUrl}/${fileName}`,
+    fileId: fileName,
+    fileName,
+    bytes: buffer.length,
+  };
+}
+
+/**
  * Deleta um arquivo do B2
  */
 async function deleteFile(fileName) {
@@ -98,4 +124,4 @@ async function getPresignedUploadUrl(key, contentType) {
   return { uploadUrl, fileUrl, contentType: ct };
 }
 
-module.exports = { configure, isConfigured, uploadFile, deleteFile, getPresignedUploadUrl };
+module.exports = { configure, isConfigured, uploadFile, uploadBuffer, deleteFile, getPresignedUploadUrl };
