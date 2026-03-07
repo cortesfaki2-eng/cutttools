@@ -173,7 +173,14 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 .badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:100px;font-size:10px;font-weight:600}
 .b-pend{background:var(--ye2);color:var(--ye)}.b-proc{background:var(--bl2);color:var(--bl)}
+.video-progress{margin-top:5px;height:3px;background:var(--b1);border-radius:100px;overflow:hidden}
+.video-progress-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,var(--p),var(--p2));transition:width .5s ease;animation:progpulse 1.5s ease-in-out infinite}
+@keyframes progpulse{0%,100%{opacity:1}50%{opacity:.5}}
+.video-proc-msg{font-size:10px;color:var(--bl);margin-top:2px}
 .b-post{background:var(--gr2);color:var(--gr)}.b-erro{background:var(--rd2);color:var(--rd)}.b-canc{background:var(--s3);color:var(--tx3)}
+.post-progress{margin-top:5px;height:3px;background:var(--b1);border-radius:100px;overflow:hidden}
+.post-progress-fill{height:100%;background:var(--bl);border-radius:100px;transition:width .6s ease}
+.post-progress-msg{font-size:9px;color:var(--bl);margin-top:2px}
 .toasts{position:fixed;bottom:16px;right:16px;display:flex;flex-direction:column;gap:6px;z-index:999}
 .toast{background:var(--s2);border:1px solid var(--b1);border-radius:10px;padding:10px 13px;font-size:12px;max-width:300px;animation:tin .22s ease;box-shadow:0 4px 20px rgba(0,0,0,.5)}
 @keyframes tin{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}
@@ -702,39 +709,54 @@ async function runUploadPresign(qid,files,params,acc){
 
   updateQueue(qid,0,total,'Iniciando upload...','uploading',{current:null});
 
-  // Upload de 1 arquivo via servidor (multipart)
-  async function uploadOne(f,idx){
-    if(cancelled||ctrl.signal.aborted)return null;
-    const sizeMB=(f.size/1024/1024).toFixed(1);
-    updateQueue(qid,uploadDone,total,`↑ ${uploadDone+1}/${total} · ${f.name} (${sizeMB}MB)`,'uploading',{current:f.name});
-    try{
+  // Upload de 1 arquivo via XHR — permite progresso real durante envio
+  function uploadOne(f,idx){
+    return new Promise(resolve=>{
+      if(cancelled)return resolve(null);
+      const sizeMB=(f.size/1024/1024).toFixed(1);
       const fd=new FormData();
       fd.append('videos',f);
       fd.append('accountId',params.accountId);
       fd.append('batchName',batchId);
       fd.append('caption',params.caption||'');
       fd.append('hashtags',params.hashtags||'');
-      fd.append('cycles','1'); // ciclos tratados no confirm-batch
-      fd.append('_onlyUpload','1'); // flag: só fazer upload pro R2, não agendar ainda
-      const resp=await fetch('/api/videos/upload-only',{
-        method:'POST',
-        body:fd,
-        headers:{'Authorization':'Bearer '+authToken},
-        signal:ctrl.signal
-      });
-      if(!resp.ok){const t=await resp.text().catch(()=>'');throw new Error('HTTP '+resp.status+' '+t.slice(0,100));}
-      const r=await resp.json();
-      if(r.error)throw new Error(r.error);
-      uploadDone++;
-      updateQueue(qid,uploadDone,total,`↑ ${uploadDone}/${total} enviados`,'uploading',{current:f.name});
-      return {idx, originalName:f.name, key:r.key, publicFileUrl:r.url, bytes:f.size};
-    }catch(e){
-      if(e.name==='AbortError'){cancelled=true;return null;}
-      errs++;
-      console.warn('[Upload] erro',f.name,e.message);
-      updateQueue(qid,uploadDone,total,`⚠ ${f.name}: ${e.message}`,'uploading',{current:f.name,error:true});
-      return null;
-    }
+
+      const xhr=new XMLHttpRequest();
+      ctrl.signal.addEventListener('abort',()=>xhr.abort(),{once:true});
+
+      xhr.upload.onprogress=e=>{
+        if(!e.lengthComputable)return;
+        const filePct=Math.round(e.loaded/e.total*100);
+        const loaded=(e.loaded/1024/1024).toFixed(1);
+        updateQueue(qid,uploadDone,total,
+          `↑ ${f.name} · ${loaded}/${sizeMB}MB (${filePct}%) — ${uploadDone}/${total} concluídos`,
+          'uploading',{current:f.name});
+      };
+
+      xhr.onload=()=>{
+        try{
+          const r=JSON.parse(xhr.responseText);
+          if(xhr.status>=400||r.error)throw new Error(r.error||'HTTP '+xhr.status);
+          uploadDone++;
+          updateQueue(qid,uploadDone,total,`✓ ${uploadDone}/${total} · ${f.name} ok`,'uploading',{current:f.name});
+          resolve({idx,originalName:f.name,key:r.key,publicFileUrl:r.url,bytes:f.size});
+        }catch(e){
+          errs++;
+          updateQueue(qid,uploadDone,total,`⚠ ${f.name}: ${e.message}`,'uploading',{current:f.name,error:true});
+          resolve(null);
+        }
+      };
+      xhr.onerror=()=>{
+        if(ctrl.signal.aborted){cancelled=true;return resolve(null);}
+        errs++;updateQueue(qid,uploadDone,total,`⚠ ${f.name}: erro de rede`,'uploading',{current:f.name,error:true});
+        resolve(null);
+      };
+      xhr.onabort=()=>{cancelled=true;resolve(null);};
+
+      xhr.open('POST','/api/videos/upload-only');
+      xhr.setRequestHeader('Authorization','Bearer '+authToken);
+      xhr.send(fd);
+    });
   }
 
   // Processar em paralelo em grupos de PARALLEL
@@ -861,7 +883,21 @@ async function loadVideos(){
   document.getElementById('pendCount').textContent=counts.pendente||0;const el=document.getElementById('videosList');
   if(!videos.length){el.innerHTML='<div class="empty"><div class="empty-icon">🎬</div><p>Nenhum vídeo</p></div>';return;}
   const ic={pendente:'⏰',processando:'🔄',postado:'✅',erro:'❌',cancelado:'🚫'};const sc={pendente:'b-pend',processando:'b-proc',postado:'b-post',erro:'b-erro',cancelado:'b-canc'};
-  el.innerHTML=videos.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">${ic[v.status]||'⏰'}</span><div style="min-width:0"><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}${v.cycle>1?' · ciclo '+v.cycle:''}</div>${v.errorMsg?'<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ '+v.errorMsg.slice(0,120)+'</div>':''}</div></div><div class="video-right"><div style="text-align:right"><span class="badge ${sc[v.status]}">${v.status}</span><div class="video-date">${v.status==='postado'?'✓ '+fmtDT(v.postedAt):fmtDT(v.scheduledFor)}</div></div><div class="video-actions">${v.b2Url?'<button class="icon-btn" title="Copiar URL do vídeo" onclick="copyVideoUrl(\''+v.b2Url+'\',this)">🔗</button>':''}${v.status==='erro'?'<button class="icon-btn" onclick="retryVideo(\''+v.id+'\')">↺</button>':''}${v.status==='pendente'?'<button class="icon-btn" onclick="pubNow(\''+v.id+'\')">▶</button>':''}<button class="icon-btn danger" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>`).join('');
+  el.innerHTML=videos.map(v=>{
+    const isProc=v.status==='processando';
+    // Calcular % a partir da mensagem de progresso "... (N/36)"
+    let procPct=5,procMsg=v.errorMsg||'Processando...';
+    if(isProc){
+      const m=procMsg.match(/^\[(\d+)%\]\s*(.*)$/);
+      if(m){procPct=parseInt(m[1]);procMsg=m[2];}
+    }
+    const infoLine=isProc
+      ? `<div class="video-proc-msg">⟳ ${procMsg.slice(0,80)}</div><div class="video-progress"><div class="video-progress-fill" style="width:${procPct}%"></div></div>`
+      : (v.errorMsg?`<div style="font-size:10px;color:var(--rd);margin-top:1px">⚠ ${v.errorMsg.slice(0,120)}</div>`:'');
+    return `<div class="video-item" id="vi-${v.id}"><div class="video-left"><span class="video-icon">${ic[v.status]||'⏰'}</span><div style="min-width:0"><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}${v.cycle>1?' · ciclo '+v.cycle:''}</div>${infoLine}</div></div><div class="video-right"><div style="text-align:right"><span class="badge ${sc[v.status]}">${v.status}</span><div class="video-date">${v.status==='postado'?'✓ '+fmtDT(v.postedAt):fmtDT(v.scheduledFor)}</div></div><div class="video-actions">${v.b2Url?'<button class="icon-btn" title="Copiar URL" onclick="copyVideoUrl(\''+v.b2Url+'\',this)">🔗</button>':''}${v.status==='erro'?'<button class="icon-btn" onclick="retryVideo(\''+v.id+'\')">↺</button>':''}${v.status==='pendente'?'<button class="icon-btn" onclick="pubNow(\''+v.id+'\')">▶</button>':''}<button class="icon-btn danger" onclick="delVideo(\''+v.id+'\')">✕</button></div></div></div>`;
+  }).join('');
+  // Iniciar polling para vídeos processando
+  startProcessingPoll(videos.filter(v=>v.status==='processando').map(v=>v.id));
 }
 async function cancelPending(){const accId=document.getElementById('accFilter').value;const r=await api('/api/videos/cancel-pending'+(accId!=='all'?'?accountId='+accId:''),{method:'POST'});toast((r.cancelled||0)+' cancelados','wa');loadVideos();}
 async function retryVideo(id){await api('/api/videos/'+id+'/retry',{method:'POST'});toast('Reagendado','ok');loadVideos();}
@@ -1009,6 +1045,46 @@ async function saveEditAccount(){
     }
     closeModal('modalEditAcc');loadAccounts();
   }finally{btn.disabled=false;btn.textContent='💾 Salvar alterações';}
+}
+
+// ── POLLING DE VÍDEOS PROCESSANDO ────────────────────────────────
+let _pollTimer=null, _pollIds=new Set();
+function startProcessingPoll(ids){
+  ids.forEach(id=>_pollIds.add(id));
+  if(_pollIds.size>0&&!_pollTimer){
+    _pollTimer=setInterval(pollProcessing,3000);
+  }
+}
+async function pollProcessing(){
+  if(!_pollIds.size){clearInterval(_pollTimer);_pollTimer=null;return;}
+  const toRemove=[];
+  for(const id of _pollIds){
+    try{
+      const r=await api('/api/videos/'+id+'/status');
+      if(!r||r.error){toRemove.push(id);continue;}
+      const el=document.getElementById('vi-'+id);
+      if(!el){toRemove.push(id);continue;}
+      if(r.status!=='processando'){
+        // Terminou — recarregar lista completa
+        toRemove.push(id);
+        loadVideos();
+        if(r.status==='postado') toast('✅ Vídeo publicado!','ok');
+        if(r.status==='erro') toast('❌ Erro: '+(r.errorMsg||'').slice(0,60),'er');
+        continue;
+      }
+      // Ainda processando — atualizar barra inline sem recarregar lista
+      const raw=r.errorMsg||'Processando...';
+      const m=raw.match(/^\[(\d+)%\]\s*(.*)$/);
+      const pct=m?parseInt(m[1]):5;
+      const msg=m?m[2]:raw;
+      const fill=el.querySelector('.video-progress-fill');
+      const msgEl=el.querySelector('.video-proc-msg');
+      if(fill) fill.style.width=pct+'%';
+      if(msgEl) msgEl.textContent='⟳ '+msg.slice(0,80);
+    }catch(e){}
+  }
+  toRemove.forEach(id=>_pollIds.delete(id));
+  if(!_pollIds.size){clearInterval(_pollTimer);_pollTimer=null;}
 }
 
 function copyVideoUrl(url, btn) {
