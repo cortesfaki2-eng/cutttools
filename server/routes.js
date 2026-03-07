@@ -455,8 +455,9 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
       current = d;
     } else {
       const next = new Date(current.getTime() + intervalMinutes * 60000);
-      const nextMins = next.getHours()*60 + next.getMinutes();
-      const endMins = endH*60 + endM;
+      // Usar UTC para comparar com endH/endM (que já estão em UTC via offsetHours)
+      const nextMins = next.getUTCHours()*60 + next.getUTCMinutes();
+      const endMins = (endH - offsetHours)*60 + endM;
       if (nextMins >= endMins) {
         slotInDay = 0;
         const d = new Date(next); d.setDate(d.getDate()+1);
