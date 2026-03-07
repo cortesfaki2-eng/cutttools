@@ -420,7 +420,10 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
       <div class="card" style="margin-bottom:14px">
         <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
           <span>Status por conta</span>
-          <button class="btn btn-sm btn-g" onclick="loadDash()" style="font-size:10px;padding:3px 8px">🔄</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="dashCatFilter" onchange="loadDash()" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--b2);background:var(--b1);color:var(--tx1);height:28px"><option value="all">Todas categorias</option></select>
+            <button class="btn btn-sm btn-g" onclick="loadDash()" style="font-size:10px;padding:3px 8px">🔄</button>
+          </div>
         </div>
         <div id="dashAccStats"><div class="empty"><div class="empty-icon">📊</div><p>Carregando...</p></div></div>
       </div>
@@ -601,7 +604,7 @@ function nav(page){
   document.getElementById('panel-'+page).classList.add('act');
   const navBtn = document.getElementById('n-'+page); if(navBtn) navBtn.classList.add('act');
   document.getElementById('pageTitle').textContent=titles[page]||page;
-  if(page==='dash')loadDash();
+  if(page==='dash'){loadCategories();loadDash();}
   if(page==='accounts')loadAccounts();
   if(page==='videos'){populateAccFilter();loadVideos();}
   if(page==='settings')loadSettings();
@@ -892,10 +895,19 @@ async function loadDash(){
   document.getElementById('ds-accs').textContent=sr.accounts||0;
   document.getElementById('ds-proc').textContent=sr.activeJobs||0;
   document.getElementById('ds-today').textContent=d.todayCount||0;
-  // Cards por conta
+  // Atualizar select de categoria do dashboard
+  const dashCatSel=document.getElementById('dashCatFilter');
+  if(dashCatSel){
+    const curDashCat=dashCatSel.value;
+    dashCatSel.innerHTML='<option value="all">Todas categorias</option>'+categories.map(c=>'<option value="'+c.id+'"'+(c.id===curDashCat?' selected':'')+'>'+c.name+'</option>').join('');
+    if(curDashCat)dashCatSel.value=curDashCat;
+  }
+  // Cards por conta — filtrar por categoria
+  const dashCatId=dashCatSel?dashCatSel.value:'all';
   const accEl=document.getElementById('dashAccStats');
-  const accStats=d.accStats||[];
-  if(!accStats.length){accEl.innerHTML='<div class="empty"><div class="empty-icon">📱</div><p>Nenhuma conta cadastrada</p></div>';}
+  const accStatsAll=d.accStats||[];
+  const accStats=dashCatId==='all'?accStatsAll:accStatsAll.filter(a=>a.categoryId===dashCatId);
+  if(!accStats.length){accEl.innerHTML='<div class="empty"><div class="empty-icon">📱</div><p>Nenhuma conta'+(dashCatId!=='all'?' nessa categoria':' cadastrada')+'</p></div>';}
   else{accEl.innerHTML='<div class="dash-acc-grid">'+accStats.map(a=>{
     const c=a.counts||{};
     const post=c.postado||0, pend=c.pendente||0, err=c.erro||0;
@@ -1198,12 +1210,19 @@ async function loadCategories() {
     sel.innerHTML = '<option value="">Sem categoria</option>' +
       categories.map(c => '<option value="' + c.id + '"' + (c.id===cur?' selected':'') + '>' + c.name + '</option>').join('');
   }
-  // Atualizar filtro de categoria
+  // Atualizar filtro de categoria nos vídeos
   const catSel = document.getElementById('catFilter');
   if (catSel) {
     const cur = catSel.value;
     catSel.innerHTML = '<option value="all">Todas categorias</option>' +
       categories.map(c => '<option value="' + c.id + '"' + (c.id===cur?' selected':'') + '>' + c.name + '</option>').join('');
+  }
+  // Atualizar filtro de categoria no dashboard
+  const dashCatSel2 = document.getElementById('dashCatFilter');
+  if (dashCatSel2) {
+    const cur2 = dashCatSel2.value;
+    dashCatSel2.innerHTML = '<option value="all">Todas categorias</option>' +
+      categories.map(c => '<option value="' + c.id + '"' + (c.id===cur2?' selected':'') + '>' + c.name + '</option>').join('');
   }
 }
 
@@ -1324,8 +1343,9 @@ function copyVideoUrl(url, btn) {
 }
 
 async function appInit(){
-  accounts=[];updateSbAccounts(); // limpa sidebar antes de buscar
+  accounts=[];updateSbAccounts();
   const data=await api('/api/accounts');accounts=data;updateSbAccounts();
+  await loadCategories();
   await loadCaptionPresets();
   loadDash();
 }
