@@ -192,6 +192,55 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .admin-user-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .admin-user-right select{width:auto;padding:5px 8px;font-size:11px}
 @media(max-width:900px){.acc-grid{grid-template-columns:1fr 1fr}.stat-grid.c4{grid-template-columns:1fr 1fr}}
+/* Dashboard por conta */
+.dash-acc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px}
+.dash-acc-card{background:var(--s1);border:1px solid var(--b1);border-radius:12px;padding:16px;transition:border-color .15s}
+.dash-acc-card:hover{border-color:var(--b2)}
+.dash-acc-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.dash-acc-av{width:36px;height:36px;border-radius:50%;background:var(--p3);border:2px solid var(--p);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.dash-acc-name{font-size:13px;font-weight:700}
+.dash-acc-sub{font-size:10px;color:var(--tx3)}
+.dash-acc-bars{display:flex;flex-direction:column;gap:6px}
+.dash-bar-row{display:flex;align-items:center;gap:7px}
+.dash-bar-lbl{font-size:10px;color:var(--tx2);width:62px;flex-shrink:0}
+.dash-bar-track{flex:1;height:6px;background:var(--bg);border-radius:100px;overflow:hidden}
+.dash-bar-fill{height:100%;border-radius:100px;transition:width .4s}
+.dash-bar-val{font-size:10px;font-weight:700;width:28px;text-align:right;flex-shrink:0}
+.dash-acc-next{margin-top:10px;padding-top:8px;border-top:1px solid var(--b1);font-size:10px;color:var(--tx3)}
+.dash-acc-next span{color:var(--p2);font-weight:600}
+/* Caption presets */
+.preset-list{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.preset-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--s2);border:1px solid var(--b1);border-radius:8px;cursor:pointer;transition:border-color .15s}
+.preset-item:hover{border-color:var(--p)}
+.preset-item.sel{border-color:var(--p);background:var(--p3)}
+.preset-name{font-size:12px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preset-preview{font-size:10px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+/* Admin users overview extras */
+.admin-user-stats{display:flex;gap:8px;flex-wrap:wrap;margin-top:5px}
+.admin-ustat{font-size:10px;padding:2px 7px;border-radius:100px;font-weight:600}
+.admin-ustat.accs{background:var(--p3);color:var(--p2)}
+.admin-ustat.posted{background:var(--gr2);color:var(--gr)}
+.admin-ustat.pend{background:var(--ye2);color:var(--ye)}
+.admin-ustat.err{background:var(--rd2);color:var(--rd)}
+/* Account stats table */
+.acc-stat-row{display:grid;grid-template-columns:1fr 60px 60px 60px 60px 90px;align-items:center;padding:9px 12px;border-radius:8px;margin-bottom:5px;background:var(--s2);border:1px solid var(--b1);gap:8px;font-size:12px}
+.acc-stat-row:hover{border-color:var(--b2)}
+.acc-stat-row.header{background:none;border:none;color:var(--tx3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding-bottom:4px;margin-bottom:2px}
+.acc-stat-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acc-stat-num{text-align:center;font-weight:700;border-radius:6px;padding:2px 0}
+.acc-stat-bar{height:5px;background:var(--bg);border-radius:100px;overflow:hidden;margin-top:4px}
+.acc-stat-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,var(--p),var(--p2))}
+/* Preset captions */
+.caption-preset-list{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.caption-preset-item{display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--s2);border:1px solid var(--b1);border-radius:8px;cursor:pointer;transition:all .15s}
+.caption-preset-item:hover{border-color:var(--p);background:var(--p3)}
+.caption-preset-item.sel{border-color:var(--p);background:var(--p3)}
+.caption-preset-name{font-size:12px;font-weight:600;flex:1}
+.caption-preset-preview{font-size:10px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+/* Admin overview table */
+.admin-overview-row{display:grid;grid-template-columns:1fr 60px 70px 70px 60px 60px;align-items:center;padding:9px 12px;border-radius:8px;margin-bottom:5px;background:var(--s1);border:1px solid var(--b1);gap:8px;font-size:12px}
+.admin-overview-row.header{background:none;border:none;color:var(--tx3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding-bottom:4px;margin-bottom:2px}
+
 </style>
 </head>
 <body>
@@ -264,6 +313,26 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
   </div>
 </div>
 
+<!-- MODAL: Preset Captions Manager -->
+<div class="modal-bg" id="modalCaptions">
+  <div class="modal" style="max-width:560px">
+    <button class="modal-close" onclick="closeModal('modalCaptions')">✕</button>
+    <h3>📝 Legendas Pré-definidas</h3>
+    <p style="font-size:12px;color:var(--tx3);margin-bottom:14px">Salve legendas prontas para usar no upload com um clique.</p>
+    <div id="captionPresetList" class="caption-preset-list"></div>
+    <div class="card" style="padding:14px;margin-bottom:0">
+      <div class="card-title" id="captionFormTitle">Nova legenda</div>
+      <input id="cp-name" placeholder="Nome (ex: Reels Motivacional)" style="margin-bottom:8px">
+      <textarea id="cp-caption" rows="3" placeholder="Legenda padrão do vídeo..." style="margin-bottom:8px"></textarea>
+      <input id="cp-hashtags" placeholder="hashtags separadas por espaço" style="margin-bottom:10px">
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-p btn-sm" onclick="saveCaptionPreset()">💾 Salvar</button>
+        <button class="btn btn-g btn-sm" id="cpCancelEdit" style="display:none" onclick="cancelEditPreset()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Upload -->
 <div class="modal-bg" id="modalUpload">
   <div class="modal upload-modal">
@@ -271,6 +340,14 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <h3>Upload de Vídeos</h3>
     <div class="field"><label>Conta do Instagram</label><select id="up-acc"></select></div>
     <div class="field"><label>Nome do Lote (opcional)</label><input id="up-batch" placeholder="Ex: Vídeos de Janeiro"></div>
+    <!-- Preset selector -->
+    <div class="field" id="presetSelectorWrap">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <label style="margin-bottom:0">Legenda pré-definida</label>
+        <button class="btn btn-g btn-sm" style="font-size:10px;padding:3px 8px" onclick="closeModal('modalUpload');openModal('modalCaptions')">⚙️ Gerenciar</button>
+      </div>
+      <div id="uploadPresetList" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+    </div>
     <div class="r2">
       <div class="field"><label>Legenda Padrão</label><textarea id="up-cap" placeholder="Legenda para todos os vídeos..."></textarea></div>
       <div class="field"><label>Hashtags</label><textarea id="up-hash" placeholder="reels instagram viral fyp"></textarea><div class="hint">Com ou sem #</div></div>
@@ -298,7 +375,9 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <button class="nav-item act" id="n-dash" onclick="nav('dash')"><span class="icon">📊</span> Dashboard</button>
     <button class="nav-item" id="n-accounts" onclick="nav('accounts')"><span class="icon">📱</span> Configurar contas</button>
     <button class="nav-item" id="n-videos" onclick="nav('videos')"><span class="icon">🎬</span> Postar vídeos</button>
+    <button class="nav-item" id="n-captions" onclick="nav('captions')"><span class="icon">📝</span> Legendas</button>
     <button class="nav-item" id="n-settings" onclick="nav('settings')" style="display:none"><span class="icon">⚙️</span> Configurações</button>
+    <button class="nav-item" id="n-captions" onclick="nav('captions')"><span class="icon">💬</span> Legendas pré-definidas</button>
   </nav>
   <!-- ADMIN NAV (só aparece para admins) -->
   <div id="adminNav" style="display:none">
@@ -349,6 +428,14 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <div class="stat-box"><div class="stat-num c-b" id="ds-proc">0</div><div class="stat-lbl">Jobs ativos</div></div>
         <div class="stat-box"><div class="stat-num c-g" id="ds-today">0</div><div class="stat-lbl">Postados hoje</div></div>
       </div>
+      <!-- Stats por conta -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Status por conta</span>
+          <button class="btn btn-sm btn-g" onclick="loadDash()" style="font-size:10px;padding:4px 9px">🔄 Atualizar</button>
+        </div>
+        <div id="dashAccStats"><div class="empty"><div class="empty-icon">📊</div><p>Carregando...</p></div></div>
+      </div>
       <div class="card"><div class="card-title">Próximas postagens</div><div id="dashNextList"></div></div>
     </div>
     <!-- ACCOUNTS --><div class="panel" id="panel-accounts">
@@ -381,17 +468,52 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar</button>
       </div>
     </div>
+    <!-- CAPTIONS --><div class="panel" id="panel-captions">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div><h2 style="font-size:18px;font-weight:700">Legendas Pré-definidas</h2><p style="font-size:12px;color:var(--tx3)">Clique em uma legenda no upload para preencher automaticamente</p></div>
+        <button class="btn btn-p btn-sm" onclick="openAddCaption()">➕ Nova legenda</button>
+      </div>
+      <div id="captionsList"></div>
+    </div>
     <!-- ADMIN: USERS --><div class="panel" id="panel-admin-users">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div><h2 style="font-size:18px;font-weight:700">Gerenciar Contas de Usuários</h2><p style="font-size:12px;color:var(--tx3)" id="adminUserCount">0 contas</p></div>
+        <div><h2 style="font-size:18px;font-weight:700">Gerenciar Usuários</h2><p style="font-size:12px;color:var(--tx3)" id="adminUserCount">0 contas</p></div>
       </div>
       <div class="stat-grid c4" id="adminStats" style="margin-bottom:16px"></div>
-      <div style="margin-bottom:12px"><input type="text" id="adminUserSearch" placeholder="Buscar por nome ou e-mail..." oninput="renderAdminUsers()" style="max-width:350px"></div>
-      <div id="adminUsersList"></div>
+      <!-- Tabs -->
+      <div class="filter-tabs" style="margin-bottom:14px">
+        <button class="tab act" id="tab-users-list" onclick="switchAdminTab('list',this)">👥 Usuários</button>
+        <button class="tab" id="tab-users-overview" onclick="switchAdminTab('overview',this)">📊 Visão Geral</button>
+      </div>
+      <div id="adminTabList">
+        <div style="margin-bottom:12px"><input type="text" id="adminUserSearch" placeholder="Buscar por nome ou e-mail..." oninput="renderAdminUsers()" style="max-width:350px"></div>
+        <div id="adminUsersList"></div>
+      </div>
+      <div id="adminTabOverview" style="display:none">
+        <div class="admin-overview-row header">
+          <span>Usuário</span><span style="text-align:center">Contas IG</span><span style="text-align:center;color:var(--ye)">Pendentes</span><span style="text-align:center;color:var(--gr)">Postados</span><span style="text-align:center;color:var(--rd)">Erros</span><span style="text-align:center">Total</span>
+        </div>
+        <div id="adminOverviewList"></div>
+      </div>
     </div>
     <!-- ADMIN: ACTIVITY --><div class="panel" id="panel-admin-activity">
       <h2 style="font-size:18px;font-weight:700;margin-bottom:14px">Log de Atividades</h2>
       <div id="adminActivityList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Caption -->
+<div class="modal-bg" id="modalCaption">
+  <div class="modal" style="max-width:480px">
+    <button class="modal-close" onclick="closeModal('modalCaption')">✕</button>
+    <h3 id="capModalTitle">Nova Legenda</h3>
+    <div class="field"><label>Nome da legenda</label><input id="cap-name" placeholder="Ex: Motivacional, Produto X..."></div>
+    <div class="field"><label>Legenda</label><textarea id="cap-cap" rows="4" placeholder="Texto da legenda para os vídeos..."></textarea></div>
+    <div class="field"><label>Hashtags</label><textarea id="cap-hash" rows="2" placeholder="reels instagram viral fyp"></textarea><div class="hint">Com ou sem #</div></div>
+    <div class="btn-row">
+      <button class="btn btn-g" onclick="closeModal('modalCaption')">Cancelar</button>
+      <button class="btn btn-p" onclick="saveCaption()">💾 Salvar</button>
     </div>
   </div>
 </div>
@@ -501,7 +623,7 @@ function toast(msg,type='in'){const t=document.createElement('div');t.className=
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
-const titles={dash:'Dashboard',accounts:'Contas Instagram',videos:'Vídeos',settings:'Configurações','admin-users':'Gerenciar Usuários','admin-activity':'Log de Atividades'};
+const titles={dash:'Dashboard',accounts:'Contas Instagram',videos:'Vídeos',captions:'Legendas Pré-definidas',settings:'Configurações','admin-users':'Gerenciar Usuários','admin-activity':'Log de Atividades'};
 function nav(page){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('act'));
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('act'));
@@ -511,7 +633,9 @@ function nav(page){
   if(page==='dash')loadDash();
   if(page==='accounts')loadAccounts();
   if(page==='videos'){populateAccFilter();loadVideos();}
+  if(page==='captions')loadCaptionsPage();
   if(page==='settings')loadSettings();
+  if(page==='captions'){loadCaptionPresets();}
   if(page==='admin-users')loadAdminUsers();
   if(page==='admin-activity')loadAdminActivity();
 }
@@ -534,8 +658,44 @@ function renderQueue(){
 function openUpload(){
   if(!accounts.length){toast('Adicione uma conta primeiro','er');openModal('modalAddAcc');return;}
   document.getElementById('up-acc').innerHTML=accounts.map(a=>`<option value="${a.id}">@${a.username||a.label}</option>`).join('');
+  renderUploadPresets();
   openModal('modalUpload');
 }
+let captionPresets=[];
+async function loadCaptionPresets(){
+  captionPresets=await api('/api/captions');
+  renderCaptionsList();
+}
+function renderUploadPresets(){
+  const el=document.getElementById('up-presets');
+  if(!captionPresets.length){el.innerHTML='<div style="font-size:11px;color:var(--tx3);padding:4px 0">Nenhuma legenda salva. <a style="color:var(--p2);cursor:pointer" onclick="nav('captions');closeModal('modalUpload')">Criar legendas →</a></div>';return;}
+  el.innerHTML=captionPresets.map(p=>`<div class="preset-item" id="preset-${p.id}" onclick="selectPreset('${p.id}')"><div><div class="preset-name">📝 ${p.name}</div><div class="preset-preview">${p.caption||''} ${p.hashtags||''}</div></div></div>`).join('');
+}
+function selectPreset(id){
+  const p=captionPresets.find(x=>x.id===id);if(!p)return;
+  document.querySelectorAll('.preset-item').forEach(el=>el.classList.remove('sel'));
+  document.getElementById('preset-'+id)?.classList.add('sel');
+  document.getElementById('up-cap').value=p.caption||'';
+  document.getElementById('up-hash').value=p.hashtags||'';
+}
+// Captions management
+let editingCaptionId=null;
+function renderCaptionsList(){
+  const el=document.getElementById('captionsList');if(!el)return;
+  if(!captionPresets.length){el.innerHTML='<div class="empty"><div class="empty-icon">💬</div><p>Nenhuma legenda. Clique em Nova legenda para criar.</p></div>';return;}
+  el.innerHTML=captionPresets.map(p=>`<div class="video-item"><div class="video-left"><span class="video-icon">📝</span><div style="min-width:0"><div class="video-name">${p.name}</div><div class="video-account" style="white-space:normal;line-height:1.4">${p.caption?p.caption.slice(0,80)+'...':''}</div>${p.hashtags?`<div style="font-size:10px;color:var(--p2);margin-top:2px">${p.hashtags.slice(0,60)}</div>`:''}</div></div><div class="video-right"><div class="video-actions"><button class="icon-btn" onclick="editCaption('${p.id}')">✏️</button><button class="icon-btn danger" onclick="deleteCaption('${p.id}')">✕</button></div></div></div>`).join('');
+}
+function openAddCaption(){editingCaptionId=null;document.getElementById('cap-name').value='';document.getElementById('cap-cap').value='';document.getElementById('cap-hash').value='';document.getElementById('capModalTitle').textContent='Nova Legenda';openModal('modalCaption');}
+function editCaption(id){const p=captionPresets.find(x=>x.id===id);if(!p)return;editingCaptionId=id;document.getElementById('cap-name').value=p.name||'';document.getElementById('cap-cap').value=p.caption||'';document.getElementById('cap-hash').value=p.hashtags||'';document.getElementById('capModalTitle').textContent='Editar Legenda';openModal('modalCaption');}
+function deleteCaption(id){if(!confirm('Remover esta legenda?'))return;captionPresets=captionPresets.filter(p=>p.id!==id);saveCaptions();renderCaptionsList();}
+async function saveCaption(){
+  const name=document.getElementById('cap-name').value.trim();const caption=document.getElementById('cap-cap').value.trim();const hashtags=document.getElementById('cap-hash').value.trim();
+  if(!name){toast('Informe um nome','er');return;}
+  if(editingCaptionId){const idx=captionPresets.findIndex(p=>p.id===editingCaptionId);if(idx>=0)captionPresets[idx]={id:editingCaptionId,name,caption,hashtags};}
+  else{captionPresets.push({id:'c_'+Date.now(),name,caption,hashtags});}
+  await saveCaptions();closeModal('modalCaption');renderCaptionsList();toast('Legenda salva!','ok');
+}
+async function saveCaptions(){await api('/api/captions',{method:'POST',body:JSON.stringify({captions:captionPresets})});}
 const dropArea=document.getElementById('dropArea');const vfi=document.getElementById('videoFileInput');
 dropArea.addEventListener('dragover',e=>{e.preventDefault();dropArea.classList.add('over');});
 dropArea.addEventListener('dragleave',()=>dropArea.classList.remove('over'));
@@ -564,15 +724,39 @@ async function runUploadInBackground(qid,files,params,acc){
 
 // Dashboard
 async function loadDash(){
-  const[sr,vr]=await Promise.all([api('/api/stats'),api('/api/videos?status=pendente&limit=8')]);
+  const[sr,vr,ar]=await Promise.all([api('/api/stats'),api('/api/videos?status=pendente&limit=8'),api('/api/accounts/stats')]);
   document.getElementById('ds-total').textContent=sr.total||0;document.getElementById('ds-posted').textContent=sr.postado||0;
   document.getElementById('ds-pending').textContent=sr.pendente||0;document.getElementById('ds-error').textContent=sr.erro||0;
   document.getElementById('ds-accs').textContent=sr.accounts||0;document.getElementById('ds-proc').textContent=sr.activeJobs||0;
   const today=new Date().toISOString().split('T')[0];const tr=await api('/api/videos?status=postado&date='+today);
   document.getElementById('ds-today').textContent=(tr.videos||[]).length;
-  const next=vr.videos||[];const el=document.getElementById('dashNextList');
-  if(!next.length){el.innerHTML='<div class="empty"><div class="empty-icon">📅</div><p>Nenhum post agendado</p></div>';return;}
-  el.innerHTML=next.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">⏰</span><div><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}</div></div></div><div class="video-right"><div><span class="badge b-pend">pendente</span><div class="video-date">${fmtDT(v.scheduledFor)}</div></div></div></div>`).join('');
+
+  // Stats por conta
+  const accStats=ar||[];const el=document.getElementById('dashAccStats');
+  if(!accStats.length){el.innerHTML='<div class="empty"><p>Nenhuma conta cadastrada</p></div>';}
+  else{
+    const maxTotal=Math.max(1,...accStats.map(a=>a.todos||0));
+    el.innerHTML=`
+      <div class="acc-stat-row header"><span>Conta</span><span>⏰ Pend.</span><span>✅ Post.</span><span>❌ Erros</span><span>Total</span><span>Progresso</span></div>
+      ${accStats.map(a=>{
+        const pend=a.pendente||0,post=a.postado||0,err=a.erro||0,tot=a.todos||0;
+        const pct=Math.round(tot>0?post/tot*100:0);
+        const barW=Math.round(tot/maxTotal*100);
+        return `<div class="acc-stat-row" style="cursor:pointer" onclick="nav('videos');setTimeout(()=>{const s=document.getElementById('accFilter');if(s){[...s.options].forEach(o=>{if(o.value==='${a.id}')o.selected=true});loadVideos();}},100)">
+          <div class="acc-stat-name">📷 @${a.username||a.label}</div>
+          <div class="acc-stat-num" style="color:var(--ye)">${pend}</div>
+          <div class="acc-stat-num" style="color:var(--gr)">${post}</div>
+          <div class="acc-stat-num" style="color:var(--rd)">${err}</div>
+          <div class="acc-stat-num" style="color:var(--tx2)">${tot}</div>
+          <div style="min-width:80px"><div style="font-size:10px;color:var(--tx3);margin-bottom:3px;text-align:right">${pct}%</div><div class="acc-stat-bar"><div class="acc-stat-fill" style="width:${barW}%"></div></div></div>
+        </div>`;
+      }).join('')}`;
+  }
+
+  // Próximas postagens
+  const next=vr.videos||[];const nl=document.getElementById('dashNextList');
+  if(!next.length){nl.innerHTML='<div class="empty"><div class="empty-icon">📅</div><p>Nenhum post agendado</p></div>';return;}
+  nl.innerHTML=next.map(v=>`<div class="video-item"><div class="video-left"><span class="video-icon">⏰</span><div><div class="video-name">${v.originalName}</div><div class="video-account">@${v.username}</div></div></div><div class="video-right"><div><span class="badge b-pend">pendente</span><div class="video-date">${fmtDT(v.scheduledFor)}</div></div></div></div>`).join('');
 }
 
 // Accounts
@@ -634,12 +818,12 @@ async function saveSettings(){const body={b2KeyId:document.getElementById('b2-ki
 
 // ═══ ADMIN PANEL ═══
 async function loadAdminUsers(){
-  const [users, stats] = await Promise.all([api('/api/admin/users'), api('/api/admin/stats')]);
-  allAdminUsers = users;
-  document.getElementById('adminUserCount').textContent = users.length + ' conta' + (users.length !== 1 ? 's' : '');
+  const [overview, stats] = await Promise.all([api('/api/admin/users-overview'), api('/api/admin/stats')]);
+  allAdminUsers = overview;
+  document.getElementById('adminUserCount').textContent = overview.length + ' usuário' + (overview.length !== 1 ? 's' : '');
   document.getElementById('adminStats').innerHTML = `
-    <div class="stat-box"><div class="stat-num c-p">${stats.total||0}</div><div class="stat-lbl">Total contas</div></div>
-    <div class="stat-box"><div class="stat-num c-g">${stats.active||0}</div><div class="stat-lbl">Ativas</div></div>
+    <div class="stat-box"><div class="stat-num c-p">${stats.total||0}</div><div class="stat-lbl">Total usuários</div></div>
+    <div class="stat-box"><div class="stat-num c-g">${stats.active||0}</div><div class="stat-lbl">Ativos</div></div>
     <div class="stat-box"><div class="stat-num c-y">${stats.admins||0}</div><div class="stat-lbl">Admins</div></div>
     <div class="stat-box"><div class="stat-num c-b">${stats.todayLogins||0}</div><div class="stat-lbl">Logins hoje</div></div>`;
   renderAdminUsers();
@@ -649,11 +833,22 @@ function renderAdminUsers(){
   const filtered = allAdminUsers.filter(u => u.name.toLowerCase().includes(search) || u.email.toLowerCase().includes(search));
   const el = document.getElementById('adminUsersList');
   if (!filtered.length) { el.innerHTML = '<div class="empty"><p>Nenhum usuário encontrado</p></div>'; return; }
-  const planC = { free: 'c-b', pro: 'c-y', enterprise: 'c-p' };
-  el.innerHTML = filtered.map(u => `<div class="admin-user-row">
+  el.innerHTML = filtered.map(u => {
+    const vs = u.videoStats || {};
+    return `<div class="admin-user-row">
     <div class="admin-user-left">
       <div class="admin-user-av">${u.name[0].toUpperCase()}</div>
-      <div><div class="admin-user-name">${u.name} ${u.role==='admin'?'<span class="badge" style="background:var(--ye2);color:var(--ye);margin-left:4px">admin</span>':''}${u.status==='suspended'?'<span class="badge" style="background:var(--rd2);color:var(--rd);margin-left:4px">suspenso</span>':''}</div><div class="admin-user-email">${u.email} · ${u.loginCount||0} logins · desde ${fmtDT(u.createdAt)}</div></div>
+      <div>
+        <div class="admin-user-name">${u.name} ${u.role==='admin'?'<span class="badge" style="background:var(--ye2);color:var(--ye);margin-left:4px">admin</span>':''}${u.status==='suspended'?'<span class="badge" style="background:var(--rd2);color:var(--rd);margin-left:4px">suspenso</span>':''}</div>
+        <div class="admin-user-email">${u.email} · ${u.loginCount||0} logins · desde ${fmtDT(u.createdAt)}</div>
+        <div class="admin-user-stats">
+          <span class="admin-ustat accs">📱 ${u.accountCount||0} conta${(u.accountCount||0)!==1?'s':''}</span>
+          <span class="admin-ustat posted">✅ ${vs.postado||0} postados</span>
+          <span class="admin-ustat pend">⏰ ${vs.pendente||0} pendentes</span>
+          ${(vs.erro||0)>0?`<span class="admin-ustat err">❌ ${vs.erro} erros</span>`:''}
+          <span style="font-size:10px;color:var(--tx3)">📦 ${vs.total||0} total</span>
+        </div>
+      </div>
     </div>
     <div class="admin-user-right">
       <select onchange="adminChangePlan('${u.id}',this.value)" style="width:100px"><option value="free" ${u.plan==='free'?'selected':''}>Gratuito</option><option value="pro" ${u.plan==='pro'?'selected':''}>Pro</option><option value="enterprise" ${u.plan==='enterprise'?'selected':''}>Enterprise</option></select>
@@ -661,7 +856,8 @@ function renderAdminUsers(){
       <button class="btn btn-sm ${u.status==='active'?'btn-d':'btn-p'}" onclick="adminToggleStatus('${u.id}','${u.status}')">${u.status==='active'?'Suspender':'Ativar'}</button>
       ${u.id!==currentUser.id?`<button class="btn btn-sm btn-d" onclick="adminDeleteUser('${u.id}')">🗑</button>`:''}
     </div>
-  </div>`).join('');
+  </div>`;
+  }).join('');
 }
 async function adminChangePlan(id,plan){await api('/api/admin/users/'+id,{method:'PUT',body:JSON.stringify({plan})});toast('Plano atualizado','ok');loadAdminUsers();}
 async function adminToggleRole(id,current){await api('/api/admin/users/'+id,{method:'PUT',body:JSON.stringify({role:current==='admin'?'user':'admin'})});toast('Role atualizado','ok');loadAdminUsers();}
@@ -679,7 +875,9 @@ function fmtDT(iso){if(!iso)return'—';const d=new Date(iso);return d.toLocaleD
 function refreshAll(){const a=document.querySelector('.panel.act')?.id?.replace('panel-','');if(a)nav(a);}
 
 async function appInit(){
-  const data=await api('/api/accounts');accounts=data;updateSbAccounts();loadDash();
+  const data=await api('/api/accounts');accounts=data;updateSbAccounts();
+  await loadCaptionPresets();
+  loadDash();
 }
 setInterval(()=>{if(!currentUser)return;const a=document.querySelector('.panel.act')?.id;if(a==='panel-dash')loadDash();if(a==='panel-videos')loadVideos();},30000);
 </script>
