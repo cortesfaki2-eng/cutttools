@@ -1,612 +1,127 @@
-const express = require('express');
-const multer = require('multer');
-const AdmZip = require('adm-zip');
-const path = require('path');
+/**
+ * b2.js — Upload para Backblaze B2 via API S3-compatível
+ * 
+ * Backblaze B2 tem API 100% compatível com S3, então usamos @aws-sdk/client-s3
+ * Custo: ~$0,006/GB/mês = 180GB ≈ $1,08/mês
+ * 
+ * Setup:
+ * 1. backblaze.com → Create Account → Create Bucket (public)
+ * 2. App Keys → Add a New Application Key → copiar keyID e applicationKey
+ * 3. Bucket endpoint: s3.us-west-002.backblazeb2.com (varia por região)
+ */
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const fs = require('fs');
+const path = require('path');
 const { v4: uuid } = require('uuid');
-const db = require('./db');
-const ig = require('./instagram');
-const b2 = require('./b2');
 
-const router = express.Router();
-const UPLOAD_DIR = path.join(__dirname, '../../uploads/temp');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+let client = null;
+let bucketName = '';
+let publicUrl = '';
 
-const storage = multer.diskStorage({
-  destination: UPLOAD_DIR,
-  filename: (req, file, cb) => {
-    const safe = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    cb(null, uuid() + '_' + safe);
-  }
-});
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 * 1024 } });
-
-// Lock por conta para evitar race condition
-const scheduleLocks = new Map();
-async function withScheduleLock(accountId, fn) {
-  while (scheduleLocks.get(accountId)) await new Promise(r => setTimeout(r, 100));
-  scheduleLocks.set(accountId, true);
-  try { return await fn(); } finally { scheduleLocks.delete(accountId); }
-}
-
-function getLastScheduledTime(accountId) {
-  const all = db.getVideos({ accountId, status: 'pendente', limit: 99999 });
-  if (!all.length) return null;
-  const sorted = all.sort((a, b) => new Date(b.scheduledFor) - new Date(a.scheduledFor));
-  return new Date(sorted[0].scheduledFor);
-}
-
-function configureB2FromDB() {
-  const s = db.getAllSettings();
-  if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
-    b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
-  }
-}
-
-const { adminMiddleware } = require('./auth');
-
-// helpers
-const isAdmin = req => req.user && req.user.role === 'admin';
-const userId = req => req.user && req.user.id;
-
-// ══ SETTINGS ══════════════════════════════════════════════════════
-router.get('/settings', (req, res) => {
-  // Usuários comuns só veem se B2 está configurado, não as chaves
-  if (!isAdmin(req)) return res.json({ configured: db.isConfigured ? true : !!(db.getSetting('b2KeyId') && db.getSetting('b2Bucket')) });
-  const s = db.getAllSettings();
-  res.json({
-    b2KeyId: s.b2KeyId || '',
-    b2AppKey: s.b2AppKey ? '***' + s.b2AppKey.slice(-4) : '',
-    b2Bucket: s.b2Bucket || '',
-    b2Endpoint: s.b2Endpoint || '',
-    b2PublicUrl: s.b2PublicUrl || '',
-    timezoneOffset: s.timezoneOffset || '-3',
+function configure(keyId, appKey, bucket, endpoint, pubUrl) {
+  bucketName = bucket;
+  publicUrl = pubUrl || `https://${bucket}.${endpoint.replace('https://','')}`;
+  client = new S3Client({
+    endpoint,
+    region: 'us-east-1', // B2 aceita qualquer região aqui
+    credentials: { accessKeyId: keyId, secretAccessKey: appKey },
+    forcePathStyle: true, // necessário para B2
   });
-});
-
-router.post('/settings', adminMiddleware, (req, res) => {
-  const { b2KeyId, b2AppKey, b2Bucket, b2Endpoint, b2PublicUrl } = req.body;
-  if (b2KeyId) db.setSetting('b2KeyId', b2KeyId);
-  if (b2AppKey && !b2AppKey.startsWith('***')) db.setSetting('b2AppKey', b2AppKey);
-  if (b2Bucket) db.setSetting('b2Bucket', b2Bucket);
-  if (b2Endpoint) db.setSetting('b2Endpoint', b2Endpoint);
-  if (b2PublicUrl !== undefined) db.setSetting('b2PublicUrl', b2PublicUrl);
-  if (req.body.timezoneOffset !== undefined) db.setSetting('timezoneOffset', req.body.timezoneOffset);
-  configureB2FromDB();
-  res.json({ success: true });
-});
-
-// ══ ACCOUNTS ══════════════════════════════════════════════════════
-router.get('/accounts', (req, res) => {
-  const accounts = db.getAccounts(userId(req), isAdmin(req)).map(a => ({ ...a, accessToken: a.accessToken ? a.accessToken.slice(0,8)+'...' : '' }));
-  res.json(accounts);
-});
-
-router.post('/accounts', async (req, res) => {
-  const { accessToken, label, postsPerDay, startTime, endTime, intervalMode } = req.body;
-  if (!accessToken) return res.status(400).json({ error: 'Token obrigatório' });
-
-  try {
-    const info = await ig.fetchAccountFromToken(accessToken);
-    const existing = db.getAccountByIgId(info.igAccountId);
-    if (existing) return res.status(400).json({ error: `Conta @${info.username} já cadastrada` });
-
-    const ppd = parseInt(postsPerDay) || 40;
-    const st = startTime || '02:00';
-    const et = endTime || '23:00';
-    const [sh, sm] = st.split(':').map(Number);
-    const [eh, em] = et.split(':').map(Number);
-    const windowMins = (eh * 60 + em) - (sh * 60 + sm);
-    const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
-
-    const account = db.insertAccount({
-      id: uuid(), userId: userId(req), accessToken, igAccountId: info.igAccountId, username: info.username,
-      label: label || info.username, accountType: info.accountType,
-      postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins,
-      intervalMode: intervalMode || 'inteligente', status: 'active', totalPosts: 0,
-    });
-
-    res.json({ success: true, account: { ...account, accessToken: accessToken.slice(0,8)+'...' } });
-  } catch(e) {
-    res.status(400).json({ error: e.response?.data?.error?.message || e.message });
-  }
-});
-
-router.put('/accounts/:id', (req, res) => {
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  const { label, postsPerDay, startTime, endTime, intervalMode, accessToken } = req.body;
-  const ppd = parseInt(postsPerDay);
-  const [sh, sm] = (startTime||'02:00').split(':').map(Number);
-  const [eh, em] = (endTime||'23:00').split(':').map(Number);
-  const windowMins = (eh * 60 + em) - (sh * 60 + sm);
-  const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
-  const patch = { label, postsPerDay: ppd, startTime, endTime, intervalMinutes: intervalMins, intervalMode };
-  if (accessToken) patch.accessToken = accessToken;
-  db.updateAccount(req.params.id, patch);
-  res.json({ success: true });
-});
-
-
-// ── PRESIGNED UPLOAD ──────────────────────────────────────────────
-router.get('/videos/presign', async (req, res) => {
-  const { filename, accountId, contentType } = req.query;
-  if (!accountId || !filename) return res.status(400).json({ error: 'accountId e filename obrigatorios' });
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-  configureB2FromDB();
-  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
-  try {
-    const ext = path.extname(filename);
-    const base = path.basename(filename, ext).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const key = account.username + '/' + Date.now() + '_' + base + ext;
-    const { uploadUrl, fileUrl } = await b2.getPresignedUploadUrl(key, contentType || 'video/mp4');
-    res.json({ uploadUrl, publicFileUrl: fileUrl, key });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── CONFIRM LEGADO (1 arquivo) — mantido para compatibilidade ──
-router.post('/videos/confirm', async (req, res) => {
-  const { accountId, key, publicFileUrl, originalName, bytes, caption, hashtags, batchId } = req.body;
-  if (!accountId || !key) return res.status(400).json({ error: 'accountId e key obrigatorios' });
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-  try {
-    const { startTime, endTime, postsPerDay, intervalMinutes } = account;
-    const [sh, sm] = startTime.split(':').map(Number);
-    const [eh, em] = (endTime||'23:00').split(':').map(Number);
-    const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-    const uid = userId(req);
-    await withScheduleLock(accountId, async () => {
-      const lastScheduled = getLastScheduledTime(accountId);
-      const dates = generateSchedule(1, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled, offsetHours);
-      const video = db.insertVideo({ id: uuid(), userId: uid, accountId, username: account.username, originalName: originalName || key, batchName: batchId || originalName || key, b2Url: publicFileUrl, b2FileId: key, b2FileName: key, bytes: parseInt(bytes)||0, duration: 0, caption: caption||'', hashtags: hashtags||'', cycle: 1, scheduledFor: dates[0].toISOString(), status: 'pendente' });
-      ig.scheduleVideo(video.id);
-      db.updateAccount(accountId, { totalPosts: (account.totalPosts||0) + 1 });
-    });
-    res.json({ success: true });
-  } catch(e) { console.error('[Confirm]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-
-// ── PROGRESSO DE POSTAGEM — polling do frontend durante status 'processando'
-router.get('/videos/:id/progress', (req, res) => {
-  const video = db.getVideoById(req.params.id);
-  if (!video) return res.status(404).json({ error: 'Video nao encontrado' });
-  // errorMsg armazena '[pct%] msg' enquanto processando
-  let pct = 0, msg = '';
-  if (video.status === 'processando' && video.errorMsg) {
-    const m = video.errorMsg.match(/^\[(\d+)%\]\s*(.*)$/);
-    if (m) { pct = parseInt(m[1]); msg = m[2]; }
-    else msg = video.errorMsg;
-  } else if (video.status === 'postado') { pct = 100; msg = 'Publicado! ✅'; }
-  else if (video.status === 'erro') { pct = 0; msg = video.errorMsg || 'Erro'; }
-  res.json({ id: video.id, status: video.status, pct, msg, igPostId: video.igPostId });
-});
-
-// ── UPLOAD-ONLY — faz upload pro R2 via servidor (garante ContentType correto) e retorna url+key
-router.post('/videos/upload-only', upload.single('videos'), async (req, res) => {
-  const { accountId } = req.body;
-  if (!accountId || !req.file) return res.status(400).json({ error: 'accountId e arquivo obrigatorios' });
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-  configureB2FromDB();
-  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
-  try {
-    const uploaded = await b2.uploadFile(req.file.path, req.file.originalname, account.username);
-    fs.unlink(req.file.path, () => {});
-    res.json({ success: true, url: uploaded.url, key: uploaded.fileId, fileName: uploaded.fileName, bytes: uploaded.bytes });
-  } catch(e) {
-    try { fs.unlinkSync(req.file.path); } catch {}
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ── STATUS DE VÍDEO — polling de progresso durante processamento ──
-router.get('/videos/:id/status', (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v) return res.status(404).json({ error: 'not found' });
-  const acc = db.getAccountByIdForUser(v.accountId, userId(req), isAdmin(req));
-  if (!acc) return res.status(403).json({ error: 'forbidden' });
-  res.json({ id: v.id, status: v.status, errorMsg: v.errorMsg, igPostId: v.igPostId, postedAt: v.postedAt, updatedAt: v.updatedAt });
-});
-
-// ── CONFIRM-BATCH — recebe lote inteiro já ordenado, cria ciclos corretamente ──
-// Padrão de ciclos: 1-2-3-4-5-6 | 1-2-3-4-5-6 (intercalado, não em bloco)
-router.post('/videos/confirm-batch', async (req, res) => {
-  const { accountId, batchId, cycles, caption, hashtags, videos } = req.body;
-  // videos: [{key, publicFileUrl, originalName, bytes}] — JÁ em ordem correta
-  if (!accountId || !Array.isArray(videos) || !videos.length)
-    return res.status(400).json({ error: 'accountId e videos obrigatorios' });
-
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-
-  try {
-    const numCycles = Math.max(1, parseInt(cycles) || 1);
-    const { startTime, endTime, postsPerDay, intervalMinutes } = account;
-    const [sh, sm] = startTime.split(':').map(Number);
-    const [eh, em] = (endTime||'23:00').split(':').map(Number);
-    const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-    const uid = userId(req);
-    const bName = batchId || ('batch_' + Date.now());
-
-    // Total de slots = N vídeos × ciclos, intercalados: v1c1, v2c1, v3c1... v1c2, v2c2...
-    // Construir lista ordenada: para cada ciclo, todos os vídeos em ordem
-    const slots = [];
-    for (let c = 1; c <= numCycles; c++) {
-      for (const v of videos) {
-        slots.push({ ...v, cycle: c });
-      }
-    }
-
-    const totalSlots = slots.length;
-    const dates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, eh, em, getLastScheduledTime(accountId), offsetHours);
-
-    await withScheduleLock(accountId, async () => {
-      for (let i = 0; i < slots.length; i++) {
-        const s = slots[i];
-        const video = db.insertVideo({
-          id: uuid(), userId: uid, accountId, username: account.username,
-          originalName: s.originalName, batchName: bName,
-          b2Url: s.publicFileUrl, b2FileId: s.key, b2FileName: s.key,
-          bytes: parseInt(s.bytes)||0, duration: 0,
-          caption: caption||'', hashtags: hashtags||'',
-          cycle: s.cycle,
-          scheduledFor: dates[i].toISOString(),
-          status: 'pendente'
-        });
-        ig.scheduleVideo(video.id);
-      }
-      db.updateAccount(accountId, { totalPosts: (account.totalPosts||0) + totalSlots });
-      console.log(`[ConfirmBatch] @${account.username}: ${videos.length} vídeos × ${numCycles} ciclos = ${totalSlots} agendados`);
-    });
-
-    res.json({ success: true, scheduled: totalSlots });
-  } catch(e) { console.error('[ConfirmBatch]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// ── RESCHEDULE ────────────────────────────────────────────────────
-router.post('/accounts/:id/reschedule', async (req, res) => {
-  const { label, postsPerDay, startTime, endTime } = req.body;
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta nao encontrada' });
-
-  const ppd = parseInt(postsPerDay) || acc.postsPerDay;
-  const st = startTime || acc.startTime;
-  const et = endTime || acc.endTime;
-  const [sh, sm] = st.split(':').map(Number);
-  const [eh, em] = et.split(':').map(Number);
-  const windowMins = (eh*60+em) - (sh*60+sm);
-  const intervalMins = ppd > 1 ? Math.floor(windowMins/(ppd-1)) : windowMins;
-
-  db.updateAccount(req.params.id, { label: label||acc.label, postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins });
-
-  const pending = db.getVideos({ accountId: req.params.id, status: 'pendente', limit: 99999 });
-  if (!pending.length) return res.json({ success: true, rescheduled: 0 });
-
-  pending.forEach(v => ig.cancelJob(v.id));
-
-  const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStart = new Date(tomorrow);
-  tomorrowStart.setUTCHours(sh - offsetHours, sm, 0, 0);
-
-  let current = new Date(tomorrowStart);
-  let slotInDay = 0;
-
-  function nextSlot(c) {
-    const next = new Date(c.getTime() + intervalMins * 60000);
-    const nextMins = next.getHours()*60 + next.getMinutes();
-    const endMins = eh*60 + em;
-    if (nextMins >= endMins) {
-      const d = new Date(next); d.setDate(d.getDate()+1);
-      d.setUTCHours(sh - offsetHours, sm, 0, 0);
-      return { date: d, resetSlot: true };
-    }
-    return { date: next, resetSlot: false };
-  }
-
-  for (const video of pending) {
-    db.updateVideo(video.id, { scheduledFor: current.toISOString(), status: 'pendente', errorMsg: null });
-    ig.scheduleVideo(video.id);
-    slotInDay++;
-    if (slotInDay >= ppd) {
-      slotInDay = 0;
-      const d = new Date(current); d.setDate(d.getDate()+1);
-      d.setUTCHours(sh - offsetHours, sm, 0, 0);
-      current = d;
-    } else {
-      const { date, resetSlot } = nextSlot(current);
-      if (resetSlot) slotInDay = 0;
-      current = date;
-    }
-  }
-
-  console.log('[Reschedule] @' + acc.username + ': ' + pending.length + ' videos reagendados');
-  res.json({ success: true, rescheduled: pending.length });
-});
-
-router.delete('/accounts/:id', (req, res) => {
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  db.deleteAccount(req.params.id);
-  res.json({ success: true });
-});
-
-router.post('/accounts/:id/test', async (req, res) => {
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  try {
-    const info = await ig.fetchAccountFromToken(acc.accessToken);
-    res.json({ success: true, username: info.username });
-  } catch(e) {
-    res.status(400).json({ error: e.response?.data?.error?.message || e.message });
-  }
-});
-
-// ══ VIDEOS ════════════════════════════════════════════════════════
-router.get('/videos', (req, res) => {
-  const { accountId, status, date, limit = 300, offset = 0 } = req.query;
-  const videos = db.getVideos({ accountId, status, date, limit: parseInt(limit), offset: parseInt(offset), userId: userId(req), isAdmin: isAdmin(req) });
-  const counts = db.getVideoCounts(accountId, userId(req), isAdmin(req));
-  res.json({ videos, counts });
-});
-
-router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
-  const { accountId, caption, hashtags, cycles, batchName } = req.body;
-  if (!accountId) return res.status(400).json({ error: 'Selecione uma conta' });
-
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
-
-  configureB2FromDB();
-  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
-
-  // Extrair vídeos de ZIPs
-  const allFiles = [...(req.files || [])];
-  const videoFiles = allFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
-  const zipFiles = allFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
-
-  for (const zipFile of zipFiles) {
-    try {
-      const zip = new AdmZip(zipFile.path);
-      for (const entry of zip.getEntries()) {
-        if (/\.(mp4|mov|avi|mkv)$/i.test(entry.entryName) && !entry.isDirectory) {
-          const outName = uuid() + '_' + path.basename(entry.entryName);
-          const outPath = path.join(UPLOAD_DIR, outName);
-          fs.writeFileSync(outPath, entry.getData());
-          videoFiles.push({ path: outPath, originalname: path.basename(entry.entryName), size: entry.header.size });
-        }
-      }
-      fs.unlink(zipFile.path, () => {});
-    } catch(e) { console.error('[ZIP]', e.message); }
-  }
-
-  if (!videoFiles.length) return res.status(400).json({ error: 'Nenhum vídeo encontrado nos arquivos enviados' });
-
-  const numCycles = Math.max(1, parseInt(cycles) || 1);
-  const expandedFiles = [];
-  for (let c = 1; c <= numCycles; c++) videoFiles.forEach(f => expandedFiles.push({ ...f, cycle: c }));
-
-  // Gerar agenda
-  const { startTime, postsPerDay, intervalMinutes } = account;
-  const [sh, sm] = startTime.split(':').map(Number);
-  const scheduledDates = generateSchedule(expandedFiles.length, postsPerDay, intervalMinutes, sh, sm);
-
-  const results = [];
-  for (let i = 0; i < expandedFiles.length; i++) {
-    const file = expandedFiles[i];
-    try {
-      console.log(`[Upload] ${file.originalname} → B2... (${i+1}/${expandedFiles.length})`);
-      const uploaded = await b2.uploadFile(file.path, file.originalname, account.username);
-      fs.unlink(file.path, () => {});
-
-      const video = db.insertVideo({
-        id: uuid(), userId: userId(req), accountId, username: account.username,
-        originalName: file.originalname, batchName: batchName || file.originalname,
-        b2Url: uploaded.url, b2FileId: uploaded.fileId, b2FileName: uploaded.fileName,
-        bytes: uploaded.bytes, duration: 0,
-        caption: caption || '', hashtags: hashtags || '',
-        cycle: file.cycle, scheduledFor: scheduledDates[i].toISOString(),
-        status: 'pendente',
-      });
-
-      ig.scheduleVideo(video.id);
-      results.push({ id: video.id, name: file.originalname, scheduled: scheduledDates[i] });
-    } catch(e) {
-      try { fs.unlinkSync(file.path); } catch {}
-      console.error(`[Upload] ❌ ${file.originalname}: ${e.message}`);
-      results.push({ name: file.originalname, error: e.message });
-    }
-  }
-
-  const ok = results.filter(r => !r.error).length;
-  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + ok });
-
-  res.json({ success: true, total: results.length, ok, results });
-});
-
-function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, endH=23, endM=0, lastScheduled=null, offsetHours=-3) {
-  const dates = [];
-  const now = new Date();
-  let current;
-
-  if (lastScheduled && lastScheduled > now) {
-    current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
-  } else {
-    current = new Date(now.getTime() + 60000);
-    const todayStart = new Date(now); todayStart.setUTCHours(startH - offsetHours, startM, 0, 0);
-    const todayEnd = new Date(now); todayEnd.setUTCHours(endH - offsetHours, endM, 0, 0);
-    if (current < todayStart) current = todayStart;
-    else if (current > todayEnd) { current = new Date(todayStart); current.setDate(current.getDate()+1); }
-  }
-
-  let slotInDay = 0;
-  for (let i = 0; i < total; i++) {
-    dates.push(new Date(current));
-    slotInDay++;
-    if (slotInDay >= postsPerDay) {
-      slotInDay = 0;
-      const d = new Date(current); d.setDate(d.getDate()+1);
-      d.setUTCHours(startH - offsetHours, startM, 0, 0);
-      current = d;
-    } else {
-      const next = new Date(current.getTime() + intervalMinutes * 60000);
-      const nextMins = next.getHours()*60 + next.getMinutes();
-      const endMins = endH*60 + endM;
-      if (nextMins >= endMins) {
-        slotInDay = 0;
-        const d = new Date(next); d.setDate(d.getDate()+1);
-        d.setUTCHours(startH - offsetHours, startM, 0, 0);
-        current = d;
-      } else {
-        current = next;
-      }
-    }
-  }
-  return dates;
 }
 
-router.delete('/videos/:id', async (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  if (v && v.b2FileName) await b2.deleteFile(v.b2FileName).catch(() => {});
-  ig.cancelJob(req.params.id);
-  db.deleteVideo(req.params.id);
-  res.json({ success: true });
-});
+function isConfigured() {
+  return !!(client && bucketName);
+}
 
-router.post('/videos/cancel-pending', (req, res) => {
-  const { accountId } = req.query;
-  const pending = db.getVideos({ accountId, status: 'pendente', limit: 99999, userId: userId(req), isAdmin: isAdmin(req) });
-  pending.forEach(v => ig.cancelJob(v.id));
-  const cancelled = db.cancelPendingVideos(accountId, userId(req), isAdmin(req));
-  res.json({ success: true, cancelled });
-});
+/**
+ * Faz upload de um arquivo local para o Backblaze B2
+ * @returns {{ url, fileId, fileName, bytes }}
+ */
+async function uploadFile(localPath, originalName, folder = 'videos') {
+  if (!isConfigured()) throw new Error('Backblaze B2 não configurado. Vá em ⚙️ Configurações.');
 
-router.post('/videos/:id/retry', (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  db.updateVideo(req.params.id, { status: 'pendente', errorMsg: null, retries: 0 });
-  ig.scheduleVideo(req.params.id);
-  res.json({ success: true });
-});
+  const ext = path.extname(originalName);
+  const fileName = `${folder}/${uuid()}${ext}`;
+  const fileBuffer = fs.readFileSync(localPath);
+  const contentType = getContentType(ext);
 
-router.post('/videos/:id/publish-now', (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  db.updateVideo(req.params.id, { status: 'pendente', scheduledFor: new Date().toISOString() });
-  setTimeout(() => ig.executePost(req.params.id), 500);
-  res.json({ success: true });
-});
-
-// Stats detalhadas por conta (para dashboard)
-router.get('/accounts/stats', (req, res) => {
-  const accounts = db.getAccounts(userId(req), isAdmin(req));
-  const result = accounts.map(a => {
-    const counts = db.getVideoCounts(a.id, userId(req), isAdmin(req));
-    return { id: a.id, username: a.username, label: a.label, postsPerDay: a.postsPerDay, startTime: a.startTime, endTime: a.endTime, intervalMinutes: a.intervalMinutes, status: a.status, ...counts };
-  });
-  res.json(result);
-});
-
-// ══ PRESET CAPTIONS ═══════════════════════════════════════════════
-router.get('/captions', (req, res) => {
-  const raw = db.getSetting('presetCaptions_' + userId(req));
-  res.json(raw ? JSON.parse(raw) : []);
-});
-
-router.post('/captions', (req, res) => {
-  const { captions } = req.body; // array de {id, name, caption, hashtags}
-  if (!Array.isArray(captions)) return res.status(400).json({ error: 'captions deve ser array' });
-  db.setSetting('presetCaptions_' + userId(req), JSON.stringify(captions));
-  res.json({ success: true });
-});
-
-router.get('/stats', (req, res) => {
-  const stats = db.getStats(userId(req), isAdmin(req));
-  stats.activeJobs = ig.getActiveJobCount();
-  res.json(stats);
-});
-
-// Stats por conta (para cards do dashboard)
-router.get('/stats/by-account', (req, res) => {
-  const accounts = db.getAccounts(userId(req), isAdmin(req));
-  const result = accounts.map(a => {
-    const counts = db.getVideoCounts(a.id, userId(req), isAdmin(req));
-    return {
-      id: a.id,
-      username: a.username,
-      label: a.label,
-      postsPerDay: a.postsPerDay,
-      startTime: a.startTime,
-      endTime: a.endTime,
-      intervalMinutes: a.intervalMinutes,
-      status: a.status,
-      counts,
-    };
-  });
-  res.json(result);
-});
-
-
-// ══ DASHBOARD — tudo em 1 request ══════════════════════════════
-router.get('/dashboard', (req, res) => {
-  const uid = userId(req);
-  const adm = isAdmin(req);
-
-  // Stats gerais
-  const stats = db.getStats(uid, adm);
-  stats.activeJobs = ig.getActiveJobCount();
-
-  // Contas com counts + próximo + último por conta
-  const accounts = db.getAccounts(uid, adm);
-
-  // Uma query só: counts por conta e status
-  const counts = db.getVideoCountsPerAccount(uid, adm);
-  // Uma query só: próximo pendente por conta
-  const nextMap = db.getNextScheduledPerAccount(uid, adm);
-  // Uma query só: último postado por conta
-  const lastMap = db.getLastPostedPerAccount(uid, adm);
-  // Uma query só: último pendente por conta (data do último vídeo na fila)
-  const lastPendMap = db.getLastPendingPerAccount(uid, adm);
-  // Próximos 8 pendentes para lista
-  const upcoming = db.getVideos({ status: 'pendente', limit: 8, userId: uid, isAdmin: adm });
-  // Postados hoje
-  const today = new Date().toISOString().split('T')[0];
-  const todayCount = db.getPostedTodayCount(uid, adm, today);
-
-  const accStats = accounts.map(a => ({
-    id: a.id,
-    username: a.username,
-    label: a.label,
-    postsPerDay: a.postsPerDay,
-    startTime: a.startTime,
-    endTime: a.endTime,
-    intervalMinutes: a.intervalMinutes,
-    status: a.status,
-    counts: counts[a.id] || { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 },
-    nextScheduled: nextMap[a.id] || null,
-    lastPosted: lastMap[a.id] || null,
-    lastPending: lastPendMap[a.id] || null,
+  await client.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: fileName,
+    Body: fileBuffer,
+    ContentType: contentType,
   }));
 
-  res.json({ stats, accStats, upcoming, todayCount });
-});
+  // URL pública do arquivo
+  const url = `${publicUrl}/${fileName}`;
 
-router.get('/export/csv', (req, res) => {
-  const { accountId } = req.query;
-  const videos = db.getVideos({ accountId, limit: 99999, userId: userId(req), isAdmin: isAdmin(req) });
-  const header = ['Arquivo','Conta','Status','Agendado','Publicado','Post ID','Erro','Ciclo'];
-  const rows = videos.map(v => [v.originalName, v.username, v.status, v.scheduledFor||'', v.postedAt||'', v.igPostId||'', v.errorMsg||'', v.cycle||1]);
-  const csv = [header,...rows].map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
-  res.setHeader('Content-Type','text/csv;charset=utf-8');
-  res.setHeader('Content-Disposition','attachment;filename="cuttools_export.csv"');
-  res.send('\uFEFF'+csv);
-});
+  return {
+    url,
+    fileId: fileName, // no B2/S3, usamos o key como ID
+    fileName,
+    bytes: fileBuffer.length,
+  };
+}
+
+/**
+ * Faz upload de um Buffer para o R2/B2 (sem I/O de disco)
+ * @returns {{ url, fileId, fileName, bytes }}
+ */
+async function uploadBuffer(buffer, originalName, folder = 'videos') {
+  if (!isConfigured()) throw new Error('Storage não configurado.');
+  const ext = path.extname(originalName);
+  const fileName = `${folder}/${uuid()}${ext}`;
+  const contentType = getContentType(ext);
+
+  await client.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: fileName,
+    Body: buffer,
+    ContentType: contentType,
+    ContentLength: buffer.length, // obrigatório para stream/buffer no R2
+  }));
+
+  return {
+    url: `${publicUrl}/${fileName}`,
+    fileId: fileName,
+    fileName,
+    bytes: buffer.length,
+  };
+}
+
+/**
+ * Deleta um arquivo do B2
+ */
+async function deleteFile(fileName) {
+  if (!isConfigured() || !fileName) return;
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: fileName }));
+  } catch(e) {
+    console.warn('[B2] Falha ao deletar:', e.message);
+  }
+}
+
+function getContentType(ext) {
+  const types = { '.mp4':'video/mp4', '.mov':'video/quicktime', '.avi':'video/x-msvideo', '.mkv':'video/x-matroska', '.webm':'video/webm' };
+  return types[ext.toLowerCase()] || 'video/mp4';
+}
 
 
-module.exports = router;
+async function getPresignedUploadUrl(key, contentType) {
+  if (!isConfigured()) throw new Error('Storage não configurado');
+  const ct = contentType || 'video/mp4';
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ContentType: ct,
+    // Garante que o objeto fica com Content-Type correto no R2/B2
+    Metadata: { 'content-type': ct }
+  });
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+  const fileUrl = publicUrl ? publicUrl.replace(/\/$/, '') + '/' + key : uploadUrl.split('?')[0];
+  // Retorna também o contentType para o frontend usar no PUT (deve ser idêntico ao assinado)
+  return { uploadUrl, fileUrl, contentType: ct };
+}
+
+module.exports = { configure, isConfigured, uploadFile, uploadBuffer, deleteFile, getPresignedUploadUrl };
