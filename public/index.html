@@ -597,7 +597,7 @@ async function loadCaptionPresets(){
 }
 function renderUploadPresets(){
   const el=document.getElementById('up-presets');if(!el)return;
-  if(!captionPresets.length){el.innerHTML='<div style="font-size:11px;color:var(--tx3);padding:3px 0">Nenhuma legenda salva. <a style="color:var(--p2);cursor:pointer" onclick="closeModal('modalUpload');nav('captions')">Criar →</a></div>';return;}
+  if(!captionPresets.length){el.innerHTML='<div style="font-size:11px;color:var(--tx3);padding:3px 0">Nenhuma legenda salva. <a style="color:var(--p2);cursor:pointer" onclick="closeModal(&quot;modalUpload&quot;);nav(&quot;captions&quot;)">Criar →</a></div>';return;}
   el.innerHTML=captionPresets.map(p=>`<div class="preset-item" id="up-preset-${p.id}" onclick="selectPreset('${p.id}')"><span style="font-size:13px">📝</span><div style="min-width:0"><div class="preset-name">${p.name}</div><div class="preset-prev">${(p.caption||'')+(p.hashtags?' · '+p.hashtags:'')}</div></div></div>`).join('');
 }
 function selectPreset(id){
