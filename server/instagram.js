@@ -6,17 +6,6 @@ const BASE = 'https://graph.facebook.com/v19.0';
 const IG_BASE = 'https://graph.instagram.com';
 const jobs = new Map();
 
-// Extrai mensagem de erro real do Instagram (dentro de err.response.data)
-function igErr(e) {
-  const d = e.response?.data;
-  if (!d) return e.message;
-  const ig = d.error || d;
-  const msg = ig.error_user_msg || ig.message || ig.error_message || JSON.stringify(d).slice(0, 200);
-  const code = ig.code ? ` (código ${ig.code})` : '';
-  const sub = ig.error_subcode ? `/${ig.error_subcode}` : '';
-  return msg + code + sub;
-}
-
 // ── Fetch account from token ──────────────────────────────────────
 async function fetchAccountFromToken(accessToken) {
   const token = accessToken.trim();
@@ -66,69 +55,62 @@ async function fetchAccountFromToken(accessToken) {
   throw new Error(`Token inválido ou expirado. Detalhe: ${lastError}`);
 }
 
-// ── Publish video ─────────────────────────────────────────────────
-async function publishVideo(accessToken, igAccountId, videoUrl, caption) {
-  let creationId;
+// ── Helpers de chamada de API (tenta IG primeiro, depois FB) ──────
+async function publishVideo(accessToken, igAccountId, videoUrl, caption, onProgress) {
+  const prog = onProgress || (() => {});
+  let creationId, lastErr = '';
 
-  // Passo 1: criar container de mídia
+  // Passo 1: criar container
+  prog('container', 5, 'Criando container no Instagram...');
   const mediaParams = { media_type: 'REELS', video_url: videoUrl, caption: caption || '', access_token: accessToken };
-  try {
-    const res = await axios.post(`${IG_BASE}/${igAccountId}/media`, null, { params: mediaParams });
-    creationId = res.data.id;
-  } catch(e1) {
-    console.warn(`[IG] graph.instagram.com/media falhou: ${igErr(e1)} — tentando graph.facebook.com`);
+  for (const [base, useParams] of [[IG_BASE, true], [BASE, false]]) {
     try {
-      const res = await axios.post(`${BASE}/${igAccountId}/media`, mediaParams);
+      const res = useParams
+        ? await axios.post(`${base}/${igAccountId}/media`, null, { params: mediaParams })
+        : await axios.post(`${base}/${igAccountId}/media`, mediaParams);
       creationId = res.data.id;
-    } catch(e2) {
-      throw new Error(`Erro ao criar container: ${igErr(e2)}`);
-    }
+      break;
+    } catch(e) { lastErr = igErr(e); console.warn(`[IG] ${base}/media falhou: ${lastErr}`); }
   }
-  console.log(`[IG] Container criado: ${creationId}`);
+  if (!creationId) throw new Error('Erro ao criar container: ' + lastErr);
+  console.log('[IG] Container criado: ' + creationId);
 
   // Passo 2: aguardar processamento (até 3 min)
   for (let i = 0; i < 36; i++) {
     await sleep(5000);
+    const pct = 15 + Math.round(((i + 1) / 36) * 73);
+    prog('processing', pct, 'Instagram processando... (' + (i+1) + '/36)');
     let statusData;
-    try {
-      const r = await axios.get(`${IG_BASE}/${creationId}`, { params: { fields: 'status_code,status,error_message', access_token: accessToken } });
-      statusData = r.data;
-    } catch(e) {
+    for (const base of [IG_BASE, BASE]) {
       try {
-        const r = await axios.get(`${BASE}/${creationId}`, { params: { fields: 'status_code,status,error_message', access_token: accessToken } });
-        statusData = r.data;
-      } catch(e2) {
-        console.warn(`[IG] Erro ao checar status (tentativa ${i+1}): ${igErr(e2)}`);
-        continue;
-      }
+        const r = await axios.get(`${base}/${creationId}`, { params: { fields: 'status_code,status,error_message', access_token: accessToken } });
+        statusData = r.data; break;
+      } catch(e) { console.warn('[IG] status via ' + base + ': ' + igErr(e)); }
     }
+    if (!statusData) continue;
     const code = statusData.status_code || statusData.status;
-    console.log(`[IG] Status ${i+1}/36: ${code}`);
-    if (code === 'FINISHED') break;
-    if (code === 'ERROR') {
-      const reason = statusData.error_message || igErr({ response: { data: statusData } }) || 'motivo desconhecido';
-      throw new Error(`Instagram rejeitou o vídeo: ${reason}`);
-    }
-    if (i === 35) throw new Error('Timeout: processamento demorou mais de 3 minutos');
+    console.log('[IG] Status ' + (i+1) + '/36: ' + code);
+    if (code === 'FINISHED') { prog('publishing', 90, 'Processado! Publicando...'); break; }
+    if (code === 'ERROR') throw new Error('Instagram rejeitou: ' + (statusData.error_message || 'motivo desconhecido'));
+    if (i === 35) throw new Error('Timeout: vídeo não processado em 3 minutos');
   }
 
   // Passo 3: publicar
   const publishParams = { creation_id: creationId, access_token: accessToken };
-  try {
-    const r = await axios.post(`${IG_BASE}/${igAccountId}/media_publish`, null, { params: publishParams });
-    return r.data.id;
-  } catch(e1) {
-    console.warn(`[IG] media_publish via IG falhou: ${igErr(e1)} — tentando FB`);
+  let postId = null;
+  for (const [base, useParams] of [[IG_BASE, true], [BASE, false]]) {
     try {
-      const r = await axios.post(`${BASE}/${igAccountId}/media_publish`, publishParams);
-      return r.data.id;
-    } catch(e2) {
-      throw new Error(`Erro ao publicar: ${igErr(e2)}`);
-    }
+      const r = useParams
+        ? await axios.post(`${base}/${igAccountId}/media_publish`, null, { params: publishParams })
+        : await axios.post(`${base}/${igAccountId}/media_publish`, publishParams);
+      postId = r.data.id; break;
+    } catch(e) { lastErr = igErr(e); console.warn('[IG] media_publish via ' + base + ' falhou: ' + lastErr); }
   }
+  if (!postId) throw new Error('Erro ao publicar: ' + lastErr);
+  prog('publishing', 100, 'Publicado! ✅');
+  return postId;
 }
 
-// ── Scheduler ────────────────────────────────────────────────────
 function scheduleVideo(videoId) {
   cancelJob(videoId);
   const video = db.getVideoById(videoId);
@@ -155,33 +137,39 @@ async function executePost(videoId) {
   const account = db.getAccountById(video.accountId);
   if (!account) { db.updateVideo(videoId, { status: 'erro', errorMsg: 'Conta não encontrada' }); return; }
 
-  db.updateVideo(videoId, { status: 'processando' });
-  console.log(`[Post] ▶ ${video.originalName} → @${account.username}`);
+  db.updateVideo(videoId, { status: 'processando', errorMsg: 'Iniciando...' });
+  console.log('[Post] ▶ ' + video.originalName + ' → @' + account.username);
 
+  // Callback de progresso: (step, pct, msg) — salva '[pct%] msg' no errorMsg para polling
+  const onProgress = (step, pct, msg) => {
+    db.updateVideo(videoId, { errorMsg: '[' + pct + '%] ' + msg });
+    console.log('[Post] ' + pct + '% ' + msg);
+  };
+
+  let igPostId = null;
   try {
     const caption = [video.caption, video.hashtags ? video.hashtags.split(/\s+/).map(h => h.startsWith('#') ? h : '#'+h).join(' ') : ''].filter(Boolean).join('\n\n');
-    const igPostId = await publishVideo(account.accessToken, account.igAccountId, video.b2Url, caption);
-    db.updateVideo(videoId, { status: 'postado', igPostId, postedAt: new Date().toISOString() });
-    console.log(`[Post] ✅ ${video.originalName} → ID: ${igPostId}`);
+    igPostId = await publishVideo(account.accessToken, account.igAccountId, video.b2Url, caption, onProgress);
   } catch(err) {
-    // Extrair mensagem real (axios envolve o erro do IG em err.response.data)
-    const errMsg = err.message || igErr(err);
+    const errMsg = err.message || 'Erro desconhecido';
     const retries = (video.retries || 0) + 1;
-    console.error(`[Post] ❌ ${video.originalName} (tentativa ${retries}/3): ${errMsg}`);
-    if (err.response?.data) console.error(`[Post] Resposta IG:`, JSON.stringify(err.response.data).slice(0, 500));
-
-    // Não retentar erros permanentes (400 = config errada, token inválido, URL inacessível)
-    const isPermanent = err.response?.status === 400 || errMsg.includes('token') || errMsg.includes('Token') || errMsg.includes('URL') || errMsg.includes('invalid');
-    if (!isPermanent && retries < 3) {
+    console.error('[Post] ❌ ' + video.originalName + ' (tentativa ' + retries + '/3): ' + errMsg);
+    if (retries < 3) {
       const retryDate = new Date(Date.now() + 10 * 60000).toISOString();
       db.updateVideo(videoId, { status: 'pendente', errorMsg: errMsg, retries, scheduledFor: retryDate });
       scheduleVideo(videoId);
-      console.log(`[Post] ↺ Retry ${retries}/3 em 10min: ${video.originalName}`);
+      console.log('[Post] ↺ Retry ' + retries + '/3 em 10min');
     } else {
       db.updateVideo(videoId, { status: 'erro', errorMsg: errMsg, retries });
     }
+    return; // sair aqui — igPostId é null
   }
+
+  // Só chega aqui se publishVideo retornou com sucesso
+  db.updateVideo(videoId, { status: 'postado', igPostId, postedAt: new Date().toISOString(), errorMsg: '' });
+  console.log('[Post] ✅ ' + video.originalName + ' → ID: ' + igPostId);
 }
+
 
 function restoreJobs() {
   const pending = db.getPendingVideos();
