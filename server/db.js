@@ -345,6 +345,22 @@ function getLastPendingPerAccount(userId=null, isAdmin=false) {
   return map;
 }
 
+function getDailySchedulePerAccount(userId=null, isAdmin=false) {
+  // Retorna contagem de vídeos pendentes por conta por dia
+  // { accountId: { 'YYYY-MM-DD': count, ... }, ... }
+  let sql = "SELECT account_id, DATE(scheduled_for) as day, COUNT(*) as cnt FROM videos WHERE status='pendente'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id, DATE(scheduled_for) ORDER BY day ASC";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => {
+    if (!map[r.account_id]) map[r.account_id] = {};
+    map[r.account_id][r.day] = r.cnt;
+  });
+  return map;
+}
+
 function getPostedTodayCount(userId=null, isAdmin=false, today) {
   let sql = "SELECT COUNT(*) as cnt FROM videos WHERE status='postado' AND DATE(posted_at)=?";
   const p = [today];
@@ -363,5 +379,5 @@ module.exports = {
   getSetting, setSetting, getAllSettings,
   getAccounts, getAccountById, getAccountByIgId, getAccountByIdForUser, insertAccount, updateAccount, deleteAccount,
   getVideos, getVideoCounts, getVideoById, getPendingVideos, insertVideo, updateVideo, deleteVideo, cancelPendingVideos, getStats,
-  getVideoCountsPerAccount, getNextScheduledPerAccount, getLastPostedPerAccount, getLastPendingPerAccount, getPostedTodayCount
+  getVideoCountsPerAccount, getNextScheduledPerAccount, getLastPostedPerAccount, getLastPendingPerAccount, getDailySchedulePerAccount, getPostedTodayCount
 };
