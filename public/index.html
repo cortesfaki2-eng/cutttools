@@ -71,6 +71,7 @@ body{background:var(--bg);color:var(--tx);font-family:'Inter',sans-serif;display
 .queue-file{font-size:10px;color:var(--p2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;margin-top:1px}
 .queue-errs{font-size:10px;color:var(--ye);margin-top:1px}
 .queue-pct.ok{color:var(--gr)}.queue-pct.er{color:var(--rd)}
+.queue-detail{font-size:10px;color:var(--tx2);margin:3px 0 2px;line-height:1.5}
 .queue-cancel{position:absolute;top:7px;right:7px;background:none;border:none;color:var(--tx3);cursor:pointer;font-size:11px;opacity:0;transition:opacity .15s}
 .queue-item:hover .queue-cancel{opacity:1}
 .queue-cancel-btn{display:block;width:100%;margin-top:6px;padding:4px 0;background:var(--rd2);border:1px solid var(--rd);border-radius:6px;color:var(--rd);font-size:10px;font-weight:600;cursor:pointer;text-align:center;transition:background .15s}
@@ -600,24 +601,36 @@ function renderQueue(){
   document.getElementById('sbQueue').style.display=uploadQueue.length?'block':'none';
   document.getElementById('queueCount').textContent=active||'';
   document.getElementById('queueList').innerHTML=uploadQueue.map(q=>{
-    const pct=q.total>0?Math.round(q.done/q.total*100):0;
     const isDone=q.status==='done',isErr=q.status==='error',isCancelled=q.status==='cancelled';
     const isActive=q.status==='uploading';
     const hasErrs=(q.errs||0)>0;
+    // Progresso em bytes (suave) ou fallback por arquivos
+    let pct=0;
+    if(isDone||isErr||isCancelled){pct=100;}
+    else if(q.totalBytes>0){pct=Math.min(99,Math.round(q.bytesLoaded/q.totalBytes*100));}
+    else if(q.total>0){pct=Math.round(q.done/q.total*100);}
     const fill=isErr?'var(--rd)':isCancelled?'var(--tx3)':isDone?(hasErrs?'var(--ye)':'var(--gr)'):'linear-gradient(90deg,var(--p),var(--p2))';
-    const pctLabel=isDone?(hasErrs?'⚠':'✓'):isErr?'✗':isCancelled?'—':(pct+'%');
-    const currentFile=q.current&&isActive?`<div class="queue-file">↑ ${q.current}</div>`:'';
-    const errsLine=(q.errs||0)>0?`<div class="queue-errs">⚠ ${q.errs} erro(s)</div>`:'';
-    const statusLabel=isDone||isErr||isCancelled ? q.label : q.label||`${q.done}/${q.total}`;
-    // Botões de ação
+    const pctLabel=isDone?(hasErrs?'⚠ '+q.errs+' erro(s)':'✓'):isErr?'✗':isCancelled?'—':(pct+'%');
+    // Linha de detalhe: arquivo atual + velocidade + arquivos concluídos
+    let detailLine='';
+    if(isActive){
+      const fileLine=q.activeFiles&&q.activeFiles.length
+        ?q.activeFiles.map(f=>`↑ ${f.name} (${f.pct}%)`).join(' · ')
+        :'';
+      const doneOf=q.total>0?`${q.done}/${q.total} arquivos`:'Enviando...';
+      const mbDone=q.totalBytes>0?((q.bytesLoaded||0)/1024/1024).toFixed(0)+'/'+(q.totalBytes/1024/1024).toFixed(0)+'MB':'';
+      detailLine=`<div class="queue-detail">${doneOf}${mbDone?' · '+mbDone:''}${fileLine?'<br><span style="color:var(--tx3)">'+fileLine+'</span>':''}</div>`;
+    }
+    const errsLine=hasErrs?`<div class="queue-errs">⚠ ${q.errs} erro(s)</div>`:'';
     const actions=isActive
-      ? `<button class="queue-cancel-btn" onclick="cancelUpload('${q.id}')" title="Cancelar upload">⏹ Cancelar</button>`
-      : `<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`;
+      ?`<button class="queue-cancel-btn" onclick="cancelUpload('${q.id}')">⏹ Cancelar</button>`
+      :`<button class="queue-cancel" onclick="removeFromQueue('${q.id}')">✕</button>`;
+    const statusLabel=isDone||isErr||isCancelled?q.label:'';
     return `<div class="queue-item">
       <div class="queue-item-top"><div class="queue-acc">@${q.accountName}</div><div class="queue-pct ${isDone&&!hasErrs?'ok':isErr||hasErrs?'er':''}">${pctLabel}</div></div>
-      <div class="queue-bar"><div class="queue-fill" style="width:${isDone||isErr||isCancelled?100:pct}%;background:${fill}"></div></div>
-      ${currentFile}
-      <div class="queue-status ${isDone?'done':isErr||isCancelled?'err':''}">${statusLabel}</div>
+      <div class="queue-bar"><div class="queue-fill" style="width:${pct}%;background:${fill}"></div></div>
+      ${detailLine}
+      ${statusLabel?`<div class="queue-status ${isDone?'done':isErr||isCancelled?'err':''}">\${statusLabel}</div>`:''}
       ${errsLine}
       ${actions}
     </div>`;
@@ -693,27 +706,42 @@ function cancelUpload(qid){
   setTimeout(()=>removeFromQueue(qid),4000);
 }
 
-// Upload via servidor em paralelo — servidor faz o PUT pro R2 (garante ContentType correto)
-// Fase 1 — envia arquivos ao servidor em paralelo (PARALLEL simultâneos)
-// Fase 2 — confirm-batch único ao servidor com lista ordenada
+// Upload via servidor em paralelo com progresso real em bytes
 async function runUploadPresign(qid,files,params,acc){
-  const PARALLEL=3;
+  const PARALLEL=4;
   let uploadDone=0,errs=0,cancelled=false;
   const total=files.length;
   const ctrl=new AbortController();
   uploadAbortMap.set(qid,ctrl);
   const batchId=params.batchName||('b_'+Date.now());
-  // Ordenar por nome antes de tudo
   const fileArr=[...files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
-  const uploaded=[]; // resultados em ordem
+  const uploaded=[];
 
-  updateQueue(qid,0,total,'Iniciando upload...','uploading',{current:null});
+  // Calcular total de bytes para barra suave
+  const totalBytes=fileArr.reduce((s,f)=>s+f.size,0);
+  // bytesPerFile[idx] = bytes enviados desse arquivo até agora
+  const bytesPerFile=new Array(fileArr.length).fill(0);
+  // activeFiles = arquivos enviando agora [{name, pct}]
+  const activeMap=new Map();
 
-  // Upload de 1 arquivo via XHR — permite progresso real durante envio
+  const q=uploadQueue.find(q=>q.id===qid);
+  if(q){q.totalBytes=totalBytes;q.bytesLoaded=0;q.activeFiles=[];}
+  updateQueue(qid,0,total,'Iniciando...','uploading');
+
+  function refreshProgress(){
+    const loaded=bytesPerFile.reduce((s,b)=>s+b,0);
+    const q=uploadQueue.find(q=>q.id===qid);
+    if(q){
+      q.bytesLoaded=loaded;
+      q.done=uploadDone;
+      q.activeFiles=[...activeMap.values()];
+      renderQueue();
+    }
+  }
+
   function uploadOne(f,idx){
     return new Promise(resolve=>{
       if(cancelled)return resolve(null);
-      const sizeMB=(f.size/1024/1024).toFixed(1);
       const fd=new FormData();
       fd.append('videos',f);
       fd.append('accountId',params.accountId);
@@ -721,37 +749,44 @@ async function runUploadPresign(qid,files,params,acc){
       fd.append('caption',params.caption||'');
       fd.append('hashtags',params.hashtags||'');
 
+      activeMap.set(idx,{name:f.name,pct:0});
+      refreshProgress();
+
       const xhr=new XMLHttpRequest();
       ctrl.signal.addEventListener('abort',()=>xhr.abort(),{once:true});
 
       xhr.upload.onprogress=e=>{
         if(!e.lengthComputable)return;
-        const filePct=Math.round(e.loaded/e.total*100);
-        const loaded=(e.loaded/1024/1024).toFixed(1);
-        updateQueue(qid,uploadDone,total,
-          `↑ ${f.name} · ${loaded}/${sizeMB}MB (${filePct}%) — ${uploadDone}/${total} concluídos`,
-          'uploading',{current:f.name});
+        bytesPerFile[idx]=e.loaded;
+        activeMap.set(idx,{name:f.name,pct:Math.round(e.loaded/e.total*100)});
+        refreshProgress();
       };
 
       xhr.onload=()=>{
+        bytesPerFile[idx]=f.size; // garantir 100% nos bytes
+        activeMap.delete(idx);
         try{
           const r=JSON.parse(xhr.responseText);
           if(xhr.status>=400||r.error)throw new Error(r.error||'HTTP '+xhr.status);
           uploadDone++;
-          updateQueue(qid,uploadDone,total,`✓ ${uploadDone}/${total} · ${f.name} ok`,'uploading',{current:f.name});
+          refreshProgress();
           resolve({idx,originalName:f.name,key:r.key,publicFileUrl:r.url,bytes:f.size});
         }catch(e){
           errs++;
-          updateQueue(qid,uploadDone,total,`⚠ ${f.name}: ${e.message}`,'uploading',{current:f.name,error:true});
+          const q=uploadQueue.find(q=>q.id===qid);if(q)q.errs=(q.errs||0)+1;
+          refreshProgress();
           resolve(null);
         }
       };
       xhr.onerror=()=>{
+        activeMap.delete(idx);
         if(ctrl.signal.aborted){cancelled=true;return resolve(null);}
-        errs++;updateQueue(qid,uploadDone,total,`⚠ ${f.name}: erro de rede`,'uploading',{current:f.name,error:true});
+        errs++;
+        const q=uploadQueue.find(q=>q.id===qid);if(q)q.errs=(q.errs||0)+1;
+        refreshProgress();
         resolve(null);
       };
-      xhr.onabort=()=>{cancelled=true;resolve(null);};
+      xhr.onabort=()=>{activeMap.delete(idx);cancelled=true;resolve(null);};
 
       xhr.open('POST','/api/videos/upload-only');
       xhr.setRequestHeader('Authorization','Bearer '+authToken);
@@ -759,7 +794,7 @@ async function runUploadPresign(qid,files,params,acc){
     });
   }
 
-  // Processar em paralelo em grupos de PARALLEL
+  // Processar em paralelo
   const indexed=fileArr.map((f,idx)=>({f,idx}));
   for(let i=0;i<indexed.length;i+=PARALLEL){
     if(cancelled||ctrl.signal.aborted)break;
@@ -771,13 +806,13 @@ async function runUploadPresign(qid,files,params,acc){
   uploadAbortMap.delete(qid);
   if(cancelled)return;
   if(!uploaded.length){
-    updateQueue(qid,0,total,'Nenhum arquivo enviado com sucesso','error');
+    updateQueue(qid,0,total,'Nenhum arquivo enviado','error');
     toast('❌ Falha no upload','er'); return;
   }
 
-  // Confirmar em lote — ordem garantida pelo idx
+  // Confirmar em lote
   uploaded.sort((a,b)=>a.idx-b.idx);
-  updateQueue(qid,uploadDone,total,`Agendando ${uploaded.length} vídeo(s)...`,'uploading',{current:null});
+  updateQueue(qid,total,total,`Agendando ${uploaded.length} vídeo(s)...`,'uploading');
   try{
     const r=await fetch('/api/videos/confirm-batch',{
       method:'POST',
