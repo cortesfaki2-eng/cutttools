@@ -939,7 +939,16 @@ async function loadVideos(){
 }
 async function cancelPending(){const accId=document.getElementById('accFilter').value;const r=await api('/api/videos/cancel-pending'+(accId!=='all'?'?accountId='+accId:''),{method:'POST'});toast((r.cancelled||0)+' cancelados','wa');loadVideos();}
 async function retryVideo(id){await api('/api/videos/'+id+'/retry',{method:'POST'});toast('Reagendado','ok');loadVideos();}
-async function pubNow(id){if(!confirm('Publicar agora?'))return;await api('/api/videos/'+id+'/publish-now',{method:'POST'});toast('Publicando...','in');setTimeout(loadVideos,8000);}
+async function pubNow(id){
+  if(!confirm('Publicar agora?'))return;
+  const r=await api('/api/videos/'+id+'/publish-now',{method:'POST'});
+  if(r.error){toast('Erro: '+r.error,'er');return;}
+  toast('▶ Publicando...','in');
+  // Recarregar imediatamente para mostrar status atualizado
+  await loadVideos();
+  // Iniciar polling para acompanhar o progresso em tempo real
+  startProcessingPoll([id]);
+}
 async function delVideo(id){await api('/api/videos/'+id,{method:'DELETE'});loadVideos();}
 
 // Settings
