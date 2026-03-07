@@ -764,8 +764,12 @@ async function runUploadPresign(qid,files,params,acc){
 
       // 2. PUT direto ao R2 via XHR (progresso real em bytes, sem passar pelo servidor)
       await new Promise((res,rej)=>{
+        // Checar abort antes de criar o XHR — signal pode já estar abortado
+        if(ctrl.signal.aborted)return rej(new Error('cancelado'));
         const xhr=new XMLHttpRequest();
-        ctrl.signal.addEventListener('abort',()=>{xhr.abort();rej(new Error('cancelado'));},{once:true});
+        // onAbortHandler: garante que XHR é abortado mesmo se signal já foi disparado
+        const onAbort=()=>{xhr.abort();rej(new Error('cancelado'));};
+        ctrl.signal.addEventListener('abort',onAbort);
         xhr.upload.onprogress=e=>{
           if(!e.lengthComputable)return;
           bytesPerFile[idx]=e.loaded;
@@ -773,11 +777,12 @@ async function runUploadPresign(qid,files,params,acc){
           refreshProgress();
         };
         xhr.onload=()=>{
+          ctrl.signal.removeEventListener('abort',onAbort);
           if(xhr.status>=400)rej(new Error('R2 '+xhr.status+': '+xhr.responseText.slice(0,120)));
           else res();
         };
-        xhr.onerror=()=>rej(new Error('Erro de rede'));
-        xhr.onabort=()=>rej(new Error('cancelado'));
+        xhr.onerror=()=>{ctrl.signal.removeEventListener('abort',onAbort);rej(new Error('Erro de rede'));};
+        xhr.onabort=()=>{ctrl.signal.removeEventListener('abort',onAbort);rej(new Error('cancelado'));};
         xhr.open('PUT',presign.uploadUrl);
         xhr.setRequestHeader('Content-Type', presign.contentType||ct);
         xhr.send(f);
@@ -800,13 +805,18 @@ async function runUploadPresign(qid,files,params,acc){
     }
   }
 
-  // Processar em paralelo
+  // Processar em paralelo — cada uploadOne checa ctrl.signal.aborted internamente
   const indexed=fileArr.map((f,idx)=>({f,idx}));
   for(let i=0;i<indexed.length;i+=PARALLEL){
     if(cancelled||ctrl.signal.aborted)break;
     const batch=indexed.slice(i,i+PARALLEL);
-    const results=await Promise.all(batch.map(({f,idx})=>uploadOne(f,idx)));
+    // Mapear: se já cancelado ao iniciar um item do batch, retorna null imediatamente
+    const results=await Promise.all(batch.map(({f,idx})=>{
+      if(cancelled||ctrl.signal.aborted)return Promise.resolve(null);
+      return uploadOne(f,idx);
+    }));
     results.forEach(r=>{if(r)uploaded.push(r);});
+    if(cancelled||ctrl.signal.aborted)break;
   }
 
   uploadAbortMap.delete(qid);
