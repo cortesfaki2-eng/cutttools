@@ -22,11 +22,14 @@ let publicUrl = '';
 function configure(keyId, appKey, bucket, endpoint, pubUrl) {
   bucketName = bucket;
   publicUrl = pubUrl || `https://${bucket}.${endpoint.replace('https://','')}`;
+  // Detectar se é R2 (*.r2.cloudflarestorage.com) ou B2
+  // R2 usa virtual-hosted style (sem forcePathStyle) — necessário para presign funcionar corretamente
+  const isR2 = endpoint && endpoint.includes('r2.cloudflarestorage.com');
   client = new S3Client({
     endpoint,
-    region: 'us-east-1', // B2 aceita qualquer região aqui
+    region: 'auto',
     credentials: { accessKeyId: keyId, secretAccessKey: appKey },
-    forcePathStyle: true, // necessário para B2
+    forcePathStyle: !isR2, // R2: false (virtual-hosted) | B2: true (path-style)
   });
 }
 
@@ -117,12 +120,14 @@ async function getPresignedUploadUrl(key, contentType) {
     Bucket: bucketName,
     Key: key,
     ContentType: ct,
-    // Garante que o objeto fica com Content-Type correto no R2/B2
-    Metadata: { 'content-type': ct }
   });
-  const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+  // signableHeaders força o Content-Type a ser parte da assinatura
+  // → R2 valida e armazena com o tipo correto
+  const uploadUrl = await getSignedUrl(client, command, {
+    expiresIn: 3600,
+    signableHeaders: new Set(['content-type']),
+  });
   const fileUrl = publicUrl ? publicUrl.replace(/\/$/, '') + '/' + key : uploadUrl.split('?')[0];
-  // Retorna também o contentType para o frontend usar no PUT (deve ser idêntico ao assinado)
   return { uploadUrl, fileUrl, contentType: ct };
 }
 
