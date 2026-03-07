@@ -706,9 +706,10 @@ function cancelUpload(qid){
   setTimeout(()=>removeFromQueue(qid),4000);
 }
 
-// Upload via servidor em paralelo com progresso real em bytes
+// Upload direto browser → R2 via presign (sem passar pelo servidor)
+// Mais rápido pois elimina 1 hop: browser → servidor → R2 vira browser → R2
 async function runUploadPresign(qid,files,params,acc){
-  const PARALLEL=4; // disco+stream: 4 paralelos equilibra I/O de disco com banda
+  const PARALLEL=6; // direto ao R2: gargalo é só banda upstream do cliente
   let uploadDone=0,errs=0,cancelled=false;
   const total=files.length;
   const ctrl=new AbortController();
@@ -739,59 +740,56 @@ async function runUploadPresign(qid,files,params,acc){
     }
   }
 
-  function uploadOne(f,idx){
-    return new Promise(resolve=>{
-      if(cancelled)return resolve(null);
-      const fd=new FormData();
-      fd.append('videos',f);
-      fd.append('accountId',params.accountId);
-      fd.append('batchName',batchId);
-      fd.append('caption',params.caption||'');
-      fd.append('hashtags',params.hashtags||'');
+  async function uploadOne(f,idx){
+    if(cancelled||ctrl.signal.aborted)return null;
+    activeMap.set(idx,{name:f.name,pct:0});
+    refreshProgress();
+    try{
+      // 1. Pedir URL presignada ao servidor (request pequeno, ~1ms)
+      const ext=f.name.split('.').pop().toLowerCase();
+      const ct='video/'+ext;
+      const presign=await fetch(
+        `/api/videos/presign?filename=${encodeURIComponent(f.name)}&accountId=${params.accountId}&contentType=${encodeURIComponent(ct)}`,
+        {headers:{'Authorization':'Bearer '+authToken},signal:ctrl.signal}
+      ).then(r=>r.json());
+      if(presign.error)throw new Error(presign.error);
 
-      activeMap.set(idx,{name:f.name,pct:0});
+      // 2. PUT direto ao R2 via XHR (progresso real em bytes, sem passar pelo servidor)
+      await new Promise((res,rej)=>{
+        const xhr=new XMLHttpRequest();
+        ctrl.signal.addEventListener('abort',()=>{xhr.abort();rej(new Error('cancelado'));},{once:true});
+        xhr.upload.onprogress=e=>{
+          if(!e.lengthComputable)return;
+          bytesPerFile[idx]=e.loaded;
+          activeMap.set(idx,{name:f.name,pct:Math.round(e.loaded/e.total*100)});
+          refreshProgress();
+        };
+        xhr.onload=()=>{
+          if(xhr.status>=400)rej(new Error('R2 '+xhr.status+': '+xhr.responseText.slice(0,120)));
+          else res();
+        };
+        xhr.onerror=()=>rej(new Error('Erro de rede'));
+        xhr.onabort=()=>rej(new Error('cancelado'));
+        xhr.open('PUT',presign.uploadUrl);
+        xhr.setRequestHeader('Content-Type', presign.contentType||ct);
+        xhr.send(f);
+      });
+
+      bytesPerFile[idx]=f.size;
+      activeMap.delete(idx);
+      uploadDone++;
       refreshProgress();
-
-      const xhr=new XMLHttpRequest();
-      ctrl.signal.addEventListener('abort',()=>xhr.abort(),{once:true});
-
-      xhr.upload.onprogress=e=>{
-        if(!e.lengthComputable)return;
-        bytesPerFile[idx]=e.loaded;
-        activeMap.set(idx,{name:f.name,pct:Math.round(e.loaded/e.total*100)});
-        refreshProgress();
-      };
-
-      xhr.onload=()=>{
-        bytesPerFile[idx]=f.size; // garantir 100% nos bytes
-        activeMap.delete(idx);
-        try{
-          const r=JSON.parse(xhr.responseText);
-          if(xhr.status>=400||r.error)throw new Error(r.error||'HTTP '+xhr.status);
-          uploadDone++;
-          refreshProgress();
-          resolve({idx,originalName:f.name,key:r.key,publicFileUrl:r.url,bytes:f.size});
-        }catch(e){
-          errs++;
-          const q=uploadQueue.find(q=>q.id===qid);if(q)q.errs=(q.errs||0)+1;
-          refreshProgress();
-          resolve(null);
-        }
-      };
-      xhr.onerror=()=>{
-        activeMap.delete(idx);
-        if(ctrl.signal.aborted){cancelled=true;return resolve(null);}
-        errs++;
-        const q=uploadQueue.find(q=>q.id===qid);if(q)q.errs=(q.errs||0)+1;
-        refreshProgress();
-        resolve(null);
-      };
-      xhr.onabort=()=>{activeMap.delete(idx);cancelled=true;resolve(null);};
-
-      xhr.open('POST','/api/videos/upload-only');
-      xhr.setRequestHeader('Authorization','Bearer '+authToken);
-      xhr.send(fd);
-    });
+      return {idx,originalName:f.name,key:presign.key,publicFileUrl:presign.fileUrl,bytes:f.size};
+    }catch(e){
+      if(e.message==='cancelado'){cancelled=true;return null;}
+      bytesPerFile[idx]=0;
+      activeMap.delete(idx);
+      errs++;
+      const q=uploadQueue.find(q=>q.id===qid);if(q)q.errs=(q.errs||0)+1;
+      console.warn('[Upload]',f.name,e.message);
+      refreshProgress();
+      return null;
+    }
   }
 
   // Processar em paralelo
