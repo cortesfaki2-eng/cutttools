@@ -498,8 +498,10 @@ router.post('/videos/:id/retry', (req, res) => {
 router.post('/videos/:id/publish-now', (req, res) => {
   const v = db.getVideoById(req.params.id);
   if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  db.updateVideo(req.params.id, { status: 'pendente', scheduledFor: new Date().toISOString() });
-  setTimeout(() => ig.executePost(req.params.id), 500);
+  // Forçar status pendente independente do estado atual (processando, erro, etc)
+  db.updateVideo(req.params.id, { status: 'pendente', scheduledFor: new Date().toISOString(), errorMsg: '', retries: 0 });
+  ig.cancelJob(req.params.id); // cancelar job agendado se existir
+  setTimeout(() => ig.executePost(req.params.id), 300);
   res.json({ success: true });
 });
 
