@@ -686,78 +686,100 @@ function cancelUpload(qid){
   setTimeout(()=>removeFromQueue(qid),4000);
 }
 
-// Upload via presign: frontend → B2 direto, sem passar pelo servidor
+// Upload via presign:
+// Fase 1 — PUT direto ao B2 em paralelo (velocidade)
+// Fase 2 — confirm em lote único ao servidor (ordem garantida + ciclos corretos)
 async function runUploadPresign(qid,files,params,acc){
-  const PARALLEL=3; // 3 uploads simultâneos
-  let done=0,errs=0,cancelled=false;
+  const PARALLEL=4;
+  let uploadDone=0,errs=0,cancelled=false;
   const total=files.length;
   const ctrl=new AbortController();
   uploadAbortMap.set(qid,ctrl);
+  const batchId=params.batchName||('b_'+Date.now());
+  const fileArr=[...files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
+  const uploaded=[]; // {originalName, key, publicFileUrl, bytes} em ordem
 
-  const batchId='b_'+Date.now();
-  const fileList=[...files].map((f,i)=>({f,i,isLast:i===files.length-1}));
+  // ── FASE 1: presign + PUT ao B2 em paralelo ──────────────────
+  updateQueue(qid,0,total,'Preparando uploads...','uploading',{current:null});
 
-  // Função para upload de 1 arquivo
-  async function uploadOne({f,i,isLast}){
-    if(cancelled||ctrl.signal.aborted)return;
+  async function uploadToB2(f,idx){
+    if(cancelled||ctrl.signal.aborted)return null;
     const sizeMB=(f.size/1024/1024).toFixed(1);
-    updateQueue(qid,done,total,`${done+errs+1}/${total} · ${f.name} (${sizeMB}MB)`,'uploading',{current:f.name});
+    updateQueue(qid,uploadDone,total,`↑ ${uploadDone+1}/${total} ${f.name} (${sizeMB}MB)`,'uploading',{current:f.name});
     try{
-      // 1. Pedir URL presignada ao servidor
-      const ext=f.name.split('.').pop();
-      const presign=await fetch(`/api/videos/presign?filename=${encodeURIComponent(f.name)}&accountId=${params.accountId}&contentType=video/${ext}`,
-        {headers:{'Authorization':'Bearer '+authToken},signal:ctrl.signal}).then(r=>r.json());
+      const ext=f.name.split('.').pop().toLowerCase();
+      const ctype='video/'+ext;
+      const presign=await fetch(
+        `/api/videos/presign?filename=${encodeURIComponent(f.name)}&accountId=${params.accountId}&contentType=${encodeURIComponent(ctype)}`,
+        {headers:{'Authorization':'Bearer '+authToken},signal:ctrl.signal}
+      ).then(r=>r.json());
       if(presign.error)throw new Error(presign.error);
 
-      // 2. Upload direto para B2 (sem passar pelo servidor)
       const putResp=await fetch(presign.uploadUrl,{
-        method:'PUT',
-        body:f,
-        headers:{'Content-Type':'video/'+ext},
+        method:'PUT',body:f,
+        headers:{'Content-Type':ctype},
         signal:ctrl.signal
       });
-      if(!putResp.ok)throw new Error('B2 HTTP '+putResp.status);
+      if(!putResp.ok)throw new Error('B2 '+putResp.status);
 
-      // 3. Confirmar no servidor (registra no DB e agenda)
-      const confirmResp=await fetch('/api/videos/confirm',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},
-        body:JSON.stringify({
-          accountId:params.accountId,
-          key:presign.key,
-          publicFileUrl:presign.publicFileUrl,
-          originalName:f.name,
-          bytes:f.size,
-          caption:params.caption||'',
-          hashtags:params.hashtags||'',
-          batchName:params.batchName||batchId,
-          batchId,
-          cycles:params.cycles||1,
-          isLastOfBatch:isLast
-        }),
-        signal:ctrl.signal
-      }).then(r=>r.json());
-      if(confirmResp.error)throw new Error(confirmResp.error);
-      done++;
+      uploadDone++;
+      updateQueue(qid,uploadDone,total,`↑ ${uploadDone}/${total} enviados`,'uploading',{current:f.name});
+      return {idx, originalName:f.name, key:presign.key, publicFileUrl:presign.publicFileUrl, bytes:f.size};
     }catch(e){
-      if(e.name==='AbortError'){cancelled=true;return;}
+      if(e.name==='AbortError'){cancelled=true;return null;}
       errs++;
-      console.warn('[Upload] erro',f.name,e.message);
-      updateQueue(qid,done,total,`Erro: ${f.name} — ${e.message}`,'uploading',{current:f.name,error:true});
+      console.warn('[Upload] B2 erro',f.name,e.message);
+      updateQueue(qid,uploadDone,total,`⚠ Erro: ${f.name} — ${e.message}`,'uploading',{current:f.name,error:true});
+      return null;
     }
-    if(!cancelled)updateQueue(qid,done+errs,total,
-      `${done+errs}/${total} · ${done} ok${errs>0?' · '+errs+' erros':''}`,'uploading',{current:f.name});
   }
 
-  // Processar em grupos de PARALLEL arquivos simultâneos
-  for(let i=0;i<fileList.length;i+=PARALLEL){
+  // Processar em paralelo mantendo índice original para reordenar depois
+  const indexedFiles=fileArr.map((f,idx)=>({f,idx}));
+  for(let i=0;i<indexedFiles.length;i+=PARALLEL){
     if(cancelled||ctrl.signal.aborted)break;
-    const batch=fileList.slice(i,i+PARALLEL);
-    await Promise.all(batch.map(uploadOne));
+    const batch=indexedFiles.slice(i,i+PARALLEL);
+    const results=await Promise.all(batch.map(({f,idx})=>uploadToB2(f,idx)));
+    results.forEach(r=>{if(r)uploaded.push(r);});
   }
 
   uploadAbortMap.delete(qid);
   if(cancelled)return;
+  if(!uploaded.length){
+    updateQueue(qid,0,total,'Nenhum arquivo enviado com sucesso','error');
+    return;
+  }
+
+  // ── FASE 2: confirm em lote único — ordem garantida pelo idx ──
+  uploaded.sort((a,b)=>a.idx-b.idx);
+  updateQueue(qid,uploadDone,total,`Agendando ${uploaded.length} vídeo(s)...`,'uploading',{current:null});
+
+  try{
+    const confirmResp=await fetch('/api/videos/confirm-batch',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken},
+      body:JSON.stringify({
+        accountId:params.accountId,
+        batchId,
+        cycles:parseInt(params.cycles)||1,
+        caption:params.caption||'',
+        hashtags:params.hashtags||'',
+        videos:uploaded.map(u=>({
+          key:u.key,
+          publicFileUrl:u.publicFileUrl,
+          originalName:u.originalName,
+          bytes:u.bytes
+        }))
+      })
+    }).then(r=>r.json());
+    if(confirmResp.error)throw new Error(confirmResp.error);
+    const scheduled=confirmResp.scheduled||uploaded.length;
+    updateQueue(qid,total,total,`${scheduled} vídeo(s) agendados!`,'done');
+    toast('✅ @'+(acc.username||acc.label)+': '+scheduled+' agendados!','ok');
+  }catch(e){
+    updateQueue(qid,total,total,'Erro ao agendar: '+e.message,'error');
+    toast('⚠️ Erro ao agendar: '+e.message,'er');
+  }
   const msg=errs>0?`${done} agendados, ${errs} com erro`:`${done} vídeo(s) agendados!`;
   updateQueue(qid,total,total,msg,errs>0&&done===0?'error':'done');
   toast(errs===0?'✅ @'+(acc.username||acc.label)+': '+done+' agendados!'
