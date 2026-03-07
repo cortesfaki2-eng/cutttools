@@ -474,6 +474,48 @@ router.get('/stats/by-account', (req, res) => {
   res.json(result);
 });
 
+
+// ══ DASHBOARD — tudo em 1 request ══════════════════════════════
+router.get('/dashboard', (req, res) => {
+  const uid = userId(req);
+  const adm = isAdmin(req);
+
+  // Stats gerais
+  const stats = db.getStats(uid, adm);
+  stats.activeJobs = ig.getActiveJobCount();
+
+  // Contas com counts + próximo + último por conta
+  const accounts = db.getAccounts(uid, adm);
+
+  // Uma query só: counts por conta e status
+  const counts = db.getVideoCountsPerAccount(uid, adm);
+  // Uma query só: próximo pendente por conta
+  const nextMap = db.getNextScheduledPerAccount(uid, adm);
+  // Uma query só: último postado por conta
+  const lastMap = db.getLastPostedPerAccount(uid, adm);
+  // Próximos 8 pendentes para lista
+  const upcoming = db.getVideos({ status: 'pendente', limit: 8, userId: uid, isAdmin: adm });
+  // Postados hoje
+  const today = new Date().toISOString().split('T')[0];
+  const todayCount = db.getPostedTodayCount(uid, adm, today);
+
+  const accStats = accounts.map(a => ({
+    id: a.id,
+    username: a.username,
+    label: a.label,
+    postsPerDay: a.postsPerDay,
+    startTime: a.startTime,
+    endTime: a.endTime,
+    intervalMinutes: a.intervalMinutes,
+    status: a.status,
+    counts: counts[a.id] || { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 },
+    nextScheduled: nextMap[a.id] || null,
+    lastPosted: lastMap[a.id] || null,
+  }));
+
+  res.json({ stats, accStats, upcoming, todayCount });
+});
+
 router.get('/export/csv', (req, res) => {
   const { accountId } = req.query;
   const videos = db.getVideos({ accountId, limit: 99999, userId: userId(req), isAdmin: isAdmin(req) });
