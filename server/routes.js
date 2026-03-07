@@ -425,8 +425,28 @@ router.post('/videos/:id/publish-now', (req, res) => {
   res.json({ success: true });
 });
 
-// ══ STATS ═════════════════════════════════════════════════════════
-router.get('/stats', (req, res) => {
+// Stats detalhadas por conta (para dashboard)
+router.get('/accounts/stats', (req, res) => {
+  const accounts = db.getAccounts(userId(req), isAdmin(req));
+  const result = accounts.map(a => {
+    const counts = db.getVideoCounts(a.id, userId(req), isAdmin(req));
+    return { id: a.id, username: a.username, label: a.label, postsPerDay: a.postsPerDay, startTime: a.startTime, endTime: a.endTime, intervalMinutes: a.intervalMinutes, status: a.status, ...counts };
+  });
+  res.json(result);
+});
+
+// ══ PRESET CAPTIONS ═══════════════════════════════════════════════
+router.get('/captions', (req, res) => {
+  const raw = db.getSetting('presetCaptions_' + userId(req));
+  res.json(raw ? JSON.parse(raw) : []);
+});
+
+router.post('/captions', (req, res) => {
+  const { captions } = req.body; // array de {id, name, caption, hashtags}
+  if (!Array.isArray(captions)) return res.status(400).json({ error: 'captions deve ser array' });
+  db.setSetting('presetCaptions_' + userId(req), JSON.stringify(captions));
+  res.json({ success: true });
+});
   const stats = db.getStats(userId(req), isAdmin(req));
   stats.activeJobs = ig.getActiveJobCount();
   res.json(stats);
@@ -445,3 +465,42 @@ router.get('/export/csv', (req, res) => {
 
 
 module.exports = router;
+
+// Dashboard detalhado por conta
+router.get('/stats/by-account', (req, res) => {
+  const accounts = db.getAccounts(userId(req), isAdmin(req));
+  const result = accounts.map(a => {
+    const counts = db.getVideoCountsByAccount(a.id);
+    const nextPending = db.getNextPendingVideo(a.id);
+    return {
+      id: a.id, username: a.username, label: a.label,
+      postsPerDay: a.postsPerDay, startTime: a.startTime, endTime: a.endTime,
+      intervalMinutes: a.intervalMinutes, status: a.status,
+      counts, nextScheduled: nextPending ? nextPending.scheduledFor : null,
+    };
+  });
+  res.json(result);
+});
+
+// Admin: visão geral de usuários com contagem de contas e vídeos
+router.get('/admin/users-overview', adminMiddleware, (req, res) => {
+  const users = db.getAllUsers();
+  const overview = users.map(u => {
+    const accCount = db.getAccountCountByUser(u.id);
+    const videoCounts = db.getStats(u.id, false);
+    return { ...u, accountCount: accCount, videoStats: videoCounts };
+  });
+  res.json(overview);
+});
+
+// Preset captions (por usuário)
+router.get('/captions', (req, res) => {
+  const raw = db.getSetting('captions_' + userId(req));
+  res.json(raw ? JSON.parse(raw) : []);
+});
+router.post('/captions', (req, res) => {
+  const { captions } = req.body;
+  if (!Array.isArray(captions)) return res.status(400).json({ error: 'captions deve ser um array' });
+  db.setSetting('captions_' + userId(req), JSON.stringify(captions));
+  res.json({ success: true });
+});
