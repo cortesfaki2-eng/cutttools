@@ -630,7 +630,7 @@ function renderQueue(){
       <div class="queue-item-top"><div class="queue-acc">@${q.accountName}</div><div class="queue-pct ${isDone&&!hasErrs?'ok':isErr||hasErrs?'er':''}">${pctLabel}</div></div>
       <div class="queue-bar"><div class="queue-fill" style="width:${pct}%;background:${fill}"></div></div>
       ${detailLine}
-      ${statusLabel?`<div class="queue-status ${isDone?'done':isErr||isCancelled?'err':''}">\${statusLabel}</div>`:''}
+      ${statusLabel?`<div class="queue-status ${isDone?'done':isErr||isCancelled?'err':''}">${statusLabel}</div>`:''}
       ${errsLine}
       ${actions}
     </div>`;
