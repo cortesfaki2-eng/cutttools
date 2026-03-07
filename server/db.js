@@ -30,8 +30,12 @@ async function init() {
   }
 
   // ── Tabelas originais ──
-  db.run(`CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, access_token TEXT NOT NULL, ig_account_id TEXT NOT NULL UNIQUE, username TEXT, label TEXT, account_type TEXT DEFAULT 'BUSINESS', posts_per_day INTEGER DEFAULT 40, start_time TEXT DEFAULT '02:00', end_time TEXT DEFAULT '23:00', interval_minutes INTEGER DEFAULT 31, interval_mode TEXT DEFAULT 'inteligente', status TEXT DEFAULT 'active', total_posts INTEGER DEFAULT 0, added_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));`);
-  db.run(`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, username TEXT, original_name TEXT, batch_name TEXT, b2_url TEXT DEFAULT '', b2_file_id TEXT DEFAULT '', b2_file_name TEXT DEFAULT '', bytes INTEGER DEFAULT 0, duration REAL DEFAULT 0, caption TEXT DEFAULT '', hashtags TEXT DEFAULT '', cycle INTEGER DEFAULT 1, scheduled_for TEXT, status TEXT DEFAULT 'pendente', ig_post_id TEXT, posted_at TEXT, error_msg TEXT, retries INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));`);
+  db.run(`CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, user_id TEXT DEFAULT NULL, access_token TEXT NOT NULL, ig_account_id TEXT NOT NULL UNIQUE, username TEXT, label TEXT, account_type TEXT DEFAULT 'BUSINESS', posts_per_day INTEGER DEFAULT 40, start_time TEXT DEFAULT '02:00', end_time TEXT DEFAULT '23:00', interval_minutes INTEGER DEFAULT 31, interval_mode TEXT DEFAULT 'inteligente', status TEXT DEFAULT 'active', total_posts INTEGER DEFAULT 0, added_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));`);
+  db.run(`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, user_id TEXT DEFAULT NULL, account_id TEXT NOT NULL, username TEXT, original_name TEXT, batch_name TEXT, b2_url TEXT DEFAULT '', b2_file_id TEXT DEFAULT '', b2_file_name TEXT DEFAULT '', bytes INTEGER DEFAULT 0, duration REAL DEFAULT 0, caption TEXT DEFAULT '', hashtags TEXT DEFAULT '', cycle INTEGER DEFAULT 1, scheduled_for TEXT, status TEXT DEFAULT 'pendente', ig_post_id TEXT, posted_at TEXT, error_msg TEXT, retries INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));`);
+
+  // Migration: adicionar user_id nas tabelas antigas se não existir
+  try { db.run(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT NULL`); } catch(e) {}
+  try { db.run(`ALTER TABLE videos ADD COLUMN user_id TEXT DEFAULT NULL`); } catch(e) {}
   db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_vs ON videos(status);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_va ON videos(account_id);`);
@@ -208,12 +212,19 @@ function getSetting(k) { const r=get('SELECT value FROM settings WHERE key=?',[k
 function setSetting(k,v) { run('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',[k,v]); persist(); }
 function getAllSettings() { const rows=all('SELECT key,value FROM settings'); const o={}; rows.forEach(r=>o[r.key]=r.value); return o; }
 
-function getAccounts() { return all('SELECT * FROM accounts ORDER BY added_at DESC').map(mapA); }
+function getAccounts(userId=null, isAdmin=false) {
+  if (isAdmin || !userId) return all('SELECT * FROM accounts ORDER BY added_at DESC').map(mapA);
+  return all('SELECT * FROM accounts WHERE user_id=? ORDER BY added_at DESC', [userId]).map(mapA);
+}
 function getAccountById(id) { return mapA(get('SELECT * FROM accounts WHERE id=?',[id])); }
+function getAccountByIdForUser(id, userId, isAdmin=false) {
+  if (isAdmin || !userId) return mapA(get('SELECT * FROM accounts WHERE id=?',[id]));
+  return mapA(get('SELECT * FROM accounts WHERE id=? AND user_id=?',[id, userId]));
+}
 function getAccountByIgId(igId) { return mapA(get('SELECT * FROM accounts WHERE ig_account_id=?',[igId])); }
 function insertAccount(a) {
-  run('INSERT INTO accounts(id,access_token,ig_account_id,username,label,account_type,posts_per_day,start_time,end_time,interval_minutes,interval_mode,status,total_posts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    [a.id,a.accessToken,a.igAccountId,a.username,a.label,a.accountType||'BUSINESS',a.postsPerDay||40,a.startTime||'02:00',a.endTime||'23:00',a.intervalMinutes||31,a.intervalMode||'inteligente',a.status||'active',a.totalPosts||0]);
+  run('INSERT INTO accounts(id,user_id,access_token,ig_account_id,username,label,account_type,posts_per_day,start_time,end_time,interval_minutes,interval_mode,status,total_posts) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [a.id,a.userId||null,a.accessToken,a.igAccountId,a.username,a.label,a.accountType||'BUSINESS',a.postsPerDay||40,a.startTime||'02:00',a.endTime||'23:00',a.intervalMinutes||31,a.intervalMode||'inteligente',a.status||'active',a.totalPosts||0]);
   persist(); return getAccountById(a.id);
 }
 function updateAccount(id, patch) {
@@ -226,17 +237,19 @@ function updateAccount(id, patch) {
 }
 function deleteAccount(id) { run('DELETE FROM videos WHERE account_id=?',[id]); run('DELETE FROM accounts WHERE id=?',[id]); persist(); }
 
-function getVideos({accountId,status,date,limit=300,offset=0}={}) {
+function getVideos({accountId,status,date,limit=300,offset=0,userId=null,isAdmin=false}={}) {
   let sql='SELECT * FROM videos WHERE 1=1'; const p=[];
+  if(!isAdmin && userId){sql+=' AND user_id=?';p.push(userId);}
   if(accountId&&accountId!=='all'){sql+=' AND account_id=?';p.push(accountId);}
   if(status&&status!=='todos'){sql+=' AND status=?';p.push(status);}
   if(date){sql+=' AND DATE(scheduled_for)=?';p.push(date);}
   sql+=' ORDER BY scheduled_for ASC LIMIT ? OFFSET ?'; p.push(limit,offset);
   return all(sql,p).map(mapV);
 }
-function getVideoCounts(accountId) {
-  let sql='SELECT status, COUNT(*) as cnt FROM videos'; const p=[];
-  if(accountId&&accountId!=='all'){sql+=' WHERE account_id=?';p.push(accountId);}
+function getVideoCounts(accountId, userId=null, isAdmin=false) {
+  let sql='SELECT status, COUNT(*) as cnt FROM videos WHERE 1=1'; const p=[];
+  if(!isAdmin && userId){sql+=' AND user_id=?';p.push(userId);}
+  if(accountId&&accountId!=='all'){sql+=' AND account_id=?';p.push(accountId);}
   sql+=' GROUP BY status';
   const rows=all(sql,p); const c={todos:0,pendente:0,processando:0,postado:0,erro:0,cancelado:0};
   rows.forEach(r=>{c[r.status]=r.cnt;c.todos+=r.cnt;}); return c;
@@ -244,8 +257,8 @@ function getVideoCounts(accountId) {
 function getVideoById(id) { return mapV(get('SELECT * FROM videos WHERE id=?',[id])); }
 function getPendingVideos() { return all("SELECT * FROM videos WHERE status IN ('pendente','processando') ORDER BY scheduled_for ASC").map(mapV); }
 function insertVideo(v) {
-  run('INSERT INTO videos(id,account_id,username,original_name,batch_name,b2_url,b2_file_id,b2_file_name,bytes,duration,caption,hashtags,cycle,scheduled_for,status,retries) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    [v.id,v.accountId,v.username,v.originalName,v.batchName||v.originalName,v.b2Url||'',v.b2FileId||'',v.b2FileName||'',v.bytes||0,v.duration||0,v.caption||'',v.hashtags||'',v.cycle||1,v.scheduledFor,v.status||'pendente',0]);
+  run('INSERT INTO videos(id,user_id,account_id,username,original_name,batch_name,b2_url,b2_file_id,b2_file_name,bytes,duration,caption,hashtags,cycle,scheduled_for,status,retries) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [v.id,v.userId||null,v.accountId,v.username,v.originalName,v.batchName||v.originalName,v.b2Url||'',v.b2FileId||'',v.b2FileName||'',v.bytes||0,v.duration||0,v.caption||'',v.hashtags||'',v.cycle||1,v.scheduledFor,v.status||'pendente',0]);
   persist(); return getVideoById(v.id);
 }
 function updateVideo(id, patch) {
@@ -257,16 +270,26 @@ function updateVideo(id, patch) {
   run('UPDATE videos SET '+f.join(', ')+' WHERE id=?',v); persist(); return getVideoById(id);
 }
 function deleteVideo(id) { run('DELETE FROM videos WHERE id=?',[id]); persist(); }
-function cancelPendingVideos(accountId) {
-  if(accountId&&accountId!=='all') run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE account_id=? AND status='pendente'",[accountId]);
-  else run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE status='pendente'");
+function cancelPendingVideos(accountId, userId=null, isAdmin=false) {
+  if(accountId&&accountId!=='all'){
+    if(!isAdmin && userId) run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE account_id=? AND user_id=? AND status='pendente'",[accountId, userId]);
+    else run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE account_id=? AND status='pendente'",[accountId]);
+  } else {
+    if(!isAdmin && userId) run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE user_id=? AND status='pendente'",[userId]);
+    else run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE status='pendente'");
+  }
   persist();
 }
-function getStats() {
-  const rows=all('SELECT status, COUNT(*) as cnt FROM videos GROUP BY status');
+function getStats(userId=null, isAdmin=false) {
+  let videoSql = "SELECT status, COUNT(*) as cnt FROM videos";
+  let accountSql = "SELECT COUNT(*) as cnt FROM accounts";
+  const p = [];
+  if(!isAdmin && userId){ videoSql += " WHERE user_id=?"; accountSql += " WHERE user_id=?"; p.push(userId); }
+  videoSql += " GROUP BY status";
+  const rows=all(videoSql, p);
   const s={total:0,pendente:0,processando:0,postado:0,erro:0,cancelado:0};
   rows.forEach(r=>{s[r.status]=r.cnt;s.total+=r.cnt;});
-  s.accounts=(get('SELECT COUNT(*) as cnt FROM accounts')||{cnt:0}).cnt; return s;
+  s.accounts=(get(accountSql, p)||{cnt:0}).cnt; return s;
 }
 
 function mapA(r) { if(!r)return null; return{id:r.id,accessToken:r.access_token,igAccountId:r.ig_account_id,username:r.username,label:r.label,accountType:r.account_type,postsPerDay:r.posts_per_day,startTime:r.start_time,endTime:r.end_time,intervalMinutes:r.interval_minutes,intervalMode:r.interval_mode,status:r.status,totalPosts:r.total_posts,addedAt:r.added_at,updatedAt:r.updated_at}; }
@@ -281,6 +304,6 @@ module.exports = {
   logActivity, getActivityLogs,
   // Original
   getSetting, setSetting, getAllSettings,
-  getAccounts, getAccountById, getAccountByIgId, insertAccount, updateAccount, deleteAccount,
+  getAccounts, getAccountById, getAccountByIgId, getAccountByIdForUser, insertAccount, updateAccount, deleteAccount,
   getVideos, getVideoCounts, getVideoById, getPendingVideos, insertVideo, updateVideo, deleteVideo, cancelPendingVideos, getStats
 };
