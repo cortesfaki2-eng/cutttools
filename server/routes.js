@@ -303,40 +303,15 @@ router.post('/accounts/:id/reschedule', async (req, res) => {
   pending.forEach(v => ig.cancelJob(v.id));
 
   const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStart = new Date(tomorrow);
-  tomorrowStart.setUTCHours(sh - offsetHours, sm, 0, 0);
 
-  let current = new Date(tomorrowStart);
-  let slotInDay = 0;
+  // Usar generateSchedule — mesmo algoritmo dos novos uploads, começa amanhã
+  const dates = generateSchedule(pending.length, ppd, intervalMins, sh, sm, eh, em, null, offsetHours);
+  if (!dates.length) return res.status(400).json({ error: 'Configuração inválida — não foi possível gerar agenda' });
 
-  function nextSlot(c) {
-    const next = new Date(c.getTime() + intervalMins * 60000);
-    const nextMins = next.getHours()*60 + next.getMinutes();
-    const endMins = eh*60 + em;
-    if (nextMins >= endMins) {
-      const d = new Date(next); d.setDate(d.getDate()+1);
-      d.setUTCHours(sh - offsetHours, sm, 0, 0);
-      return { date: d, resetSlot: true };
-    }
-    return { date: next, resetSlot: false };
-  }
-
-  for (const video of pending) {
-    db.updateVideo(video.id, { scheduledFor: current.toISOString(), status: 'pendente', errorMsg: null });
-    ig.scheduleVideo(video.id);
-    slotInDay++;
-    if (slotInDay >= ppd) {
-      slotInDay = 0;
-      const d = new Date(current); d.setDate(d.getDate()+1);
-      d.setUTCHours(sh - offsetHours, sm, 0, 0);
-      current = d;
-    } else {
-      const { date, resetSlot } = nextSlot(current);
-      if (resetSlot) slotInDay = 0;
-      current = date;
-    }
+  for (let i = 0; i < pending.length; i++) {
+    const scheduledFor = (dates[i] || dates[dates.length - 1]).toISOString();
+    db.updateVideo(pending[i].id, { scheduledFor, status: 'pendente', errorMsg: null });
+    ig.scheduleVideo(pending[i].id);
   }
 
   console.log('[Reschedule] @' + acc.username + ': ' + pending.length + ' videos reagendados');
