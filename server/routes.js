@@ -472,7 +472,7 @@ function generateSchedule(total, postsPerDay, intervalMinutes, startH, startM, e
 
 router.delete('/videos/:id', async (req, res) => {
   const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (!v || (!isAdmin(req) && v.userId && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
   if (v && v.b2FileName) await b2.deleteFile(v.b2FileName).catch(() => {});
   ig.cancelJob(req.params.id);
   db.deleteVideo(req.params.id);
@@ -489,7 +489,7 @@ router.post('/videos/cancel-pending', (req, res) => {
 
 router.post('/videos/:id/retry', (req, res) => {
   const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (!v || (!isAdmin(req) && v.userId && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
   db.updateVideo(req.params.id, { status: 'pendente', errorMsg: null, retries: 0 });
   ig.scheduleVideo(req.params.id);
   res.json({ success: true });
@@ -497,7 +497,7 @@ router.post('/videos/:id/retry', (req, res) => {
 
 router.post('/videos/:id/publish-now', (req, res) => {
   const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
+  if (!v || (!isAdmin(req) && v.userId && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
   // Forçar status pendente independente do estado atual (processando, erro, etc)
   db.updateVideo(req.params.id, { status: 'pendente', scheduledFor: new Date().toISOString(), errorMsg: '', retries: 0 });
   ig.cancelJob(req.params.id); // cancelar job agendado se existir
