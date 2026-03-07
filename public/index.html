@@ -708,7 +708,7 @@ function cancelUpload(qid){
 
 // Upload via servidor em paralelo com progresso real em bytes
 async function runUploadPresign(qid,files,params,acc){
-  const PARALLEL=4;
+  const PARALLEL=4; // disco+stream: 4 paralelos equilibra I/O de disco com banda
   let uploadDone=0,errs=0,cancelled=false;
   const total=files.length;
   const ctrl=new AbortController();
