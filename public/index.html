@@ -779,7 +779,7 @@ async function runUploadPresign(qid,files,params,acc){
       activeMap.delete(idx);
       uploadDone++;
       refreshProgress();
-      return {idx,originalName:f.name,key:presign.key,publicFileUrl:presign.fileUrl,bytes:f.size};
+      return {idx,originalName:f.name,key:presign.key,publicFileUrl:presign.publicFileUrl||presign.fileUrl,bytes:f.size};
     }catch(e){
       if(e.message==='cancelado'){cancelled=true;return null;}
       bytesPerFile[idx]=0;
