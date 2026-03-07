@@ -231,6 +231,11 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
 .dash-daily-bar{flex:1;height:4px;background:var(--bg);border-radius:100px;overflow:hidden}
 .dash-daily-fill{height:100%;background:var(--ye);border-radius:100px}
 .dash-daily-cnt{color:var(--ye);font-weight:700;width:22px;text-align:right;flex-shrink:0}
+.cat-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:600;white-space:nowrap}
+.cat-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.cat-item{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--b1);border-radius:8px}
+.cat-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.cat-name{flex:1;font-size:13px}.cat-actions{display:flex;gap:4px}
 .dash-acc-time-row{display:flex;justify-content:space-between;align-items:center;font-size:10px;padding:2px 0}
 .dash-time-lbl{color:var(--tx3)}
 .dash-time-val{color:var(--p2);font-weight:600}
@@ -299,6 +304,7 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
     <h3>Adicionar Conta Instagram</h3>
     <div class="field"><label>Access Token</label><textarea id="aa-token" rows="3" placeholder="Token IGAAh... gerado em Facebook Developers → API setup with Instagram → Generate token"></textarea></div>
     <div class="field"><label>Label (apelido opcional)</label><input id="aa-label" placeholder="Ex: Futebol, Conta Principal..."></div>
+    <div class="field"><label>Categoria</label><select id="aa-cat"><option value="">Sem categoria</option></select></div>
     <div class="field"><label>Vídeos por dia <span style="color:var(--tx3)">(máx 50)</span></label><input type="number" id="aa-ppd" value="40" min="1" max="50" oninput="updateIntervalPreview()"></div>
     <div class="r2">
       <div class="field"><label>Início da janela</label><input type="time" id="aa-st" value="02:00" oninput="updateIntervalPreview()"></div>
@@ -433,7 +439,7 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
           <button class="tab" onclick="filterTab('postado',this)">Postado (<span id="cnt-postado">0</span>)</button>
           <button class="tab" onclick="filterTab('erro',this)">Erro (<span id="cnt-erro">0</span>)</button>
         </div>
-        <select id="accFilter" onchange="loadVideos()" style="width:180px"><option value="all">Todas as contas</option></select>
+        <select id="catFilter" onchange="loadVideos()" style="width:130px"><option value="all">Todas categorias</option></select><select id="accFilter" onchange="loadVideos()" style="width:180px"><option value="all">Todas as contas</option></select>
         <input type="date" id="dateFilter" onchange="loadVideos()" style="width:145px">
         <button class="btn btn-d btn-sm" onclick="cancelPending()" style="margin-left:auto">🗑 Cancelar Pendentes (<span id="pendCount">0</span>)</button>
       </div>
@@ -455,6 +461,15 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <div class="r2"><div class="field"><label>Bucket Name</label><input id="b2-bkt"></div><div class="field"><label>Endpoint S3</label><input id="b2-ep"></div></div>
         <div class="field"><label>URL Pública</label><input id="b2-pub"><div class="hint">Formato: https://pub-xxx.r2.dev</div></div>
         <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar</button>
+      </div>
+      <div class="card" style="max-width:620px;margin-top:16px">
+        <div class="card-title">🏷️ Categorias de Contas</div>
+        <div style="display:flex;gap:8px;margin-bottom:6px">
+          <input id="cat-name-input" placeholder="Nome da categoria" style="flex:1">
+          <input type="color" id="cat-color-input" value="#6c63ff" style="width:40px;height:36px;padding:2px;border-radius:6px;border:1px solid var(--b2);background:var(--b1);cursor:pointer">
+          <button class="btn btn-p btn-sm" onclick="createCategory()">➕ Criar</button>
+        </div>
+        <div class="cat-list" id="catList"></div>
       </div>
     </div>
     <!-- ADMIN: USERS --><div class="panel" id="panel-admin-users">
@@ -481,6 +496,7 @@ let accounts = [];
 let currentStatus = 'todos';
 let currentMode = 'inteligente';
 let uploadQueue = [];
+let categories = [];
 let allAdminUsers = [];
 let captionPresets = [];
 let editingCaptionId = null;
@@ -590,6 +606,8 @@ function nav(page){
   if(page==='videos'){populateAccFilter();loadVideos();}
   if(page==='settings')loadSettings();
   if(page==='captions'){loadCaptionPresets();}
+  if(page==='settings'){loadCategories();}
+  if(page==='accounts'){loadCategories();}
   if(page==='admin-users')loadAdminUsers();
   if(page==='admin-activity')loadAdminActivity();
 }
@@ -645,9 +663,14 @@ function renderQueue(){
   }).join('');
 }
 
-function openUpload(){
+async function openUpload(){
   if(!accounts.length){toast('Adicione uma conta primeiro','er');openModal('modalAddAcc');return;}
-  document.getElementById('up-acc').innerHTML=accounts.map(a=>`<option value="${a.id}">@${a.username||a.label}</option>`).join('');
+  const cats=await api('/api/categories').catch(()=>[]);
+  const catMap={}; cats.forEach(c=>catMap[c.id]=c);
+  document.getElementById('up-acc').innerHTML=accounts.map(a=>{
+    const cat=a.categoryId&&catMap[a.categoryId]?catMap[a.categoryId]:null;
+    return '<option value="'+a.id+'">'+(cat?'['+cat.name+'] ':'')+'@'+(a.username||a.label)+'</option>';
+  }).join('');
   renderUploadPresets();
   openModal('modalUpload');
 }
@@ -881,7 +904,7 @@ async function loadDash(){
     const barMax=Math.max(post,pend,err,1);
     const pPost=Math.round(post/barMax*100),pPend=Math.round(pend/barMax*100),pErr=Math.round(err/barMax*100);
     return `<div class="dash-acc-card">
-      <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div style="flex:1"><div class="dash-acc-name">@${a.username||a.label}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div><button class="icon-btn" title="Reagendar pendentes com intervalo correto" onclick="rescheduleAcc('${a.id}','${a.username||a.label}')">🔄</button></div>
+      <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div style="flex:1"><div class="dash-acc-name">@${a.username||a.label} ${getCatTag(a.categoryId)}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div><button class="icon-btn" title="Reagendar pendentes com intervalo correto" onclick="rescheduleAcc('${a.id}','${a.username||a.label}')">🔄</button></div>
       <div class="dash-acc-bars">
         <div class="dash-bar-row"><span class="dash-bar-lbl">✅ Postados</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPost}%;background:var(--gr)"></div></div><span class="dash-bar-val c-g">${post}</span></div>
         <div class="dash-bar-row"><span class="dash-bar-lbl">⏰ Pendentes</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPend}%;background:var(--ye)"></div></div><span class="dash-bar-val c-y">${pend}</span></div>
@@ -908,6 +931,7 @@ async function loadAccounts(){
   if(!accounts.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta</p></div>';return;}
   const statsMap={};(statsArr||[]).forEach(s=>statsMap[s.id]=s);
   grid.innerHTML=accounts.map(a=>{
+    const catTag=getCatTag(a.categoryId);
     const s=statsMap[a.id]||{};const c=s||{total:0};
     return `<div class="acc-card"><div class="acc-card-top"><div class="acc-card-left"><div class="acc-avatar">📷</div><div><div class="acc-username">@${a.username||a.label}</div><span class="acc-badge intel">⚡ ${a.intervalMode||'inteligente'}</span><div class="acc-status" style="margin-top:2px">● active</div></div></div><div class="acc-card-actions"><button title="Testar" onclick="testAccount('${a.id}')">🔗</button><button title="Editar" onclick="openEditAccount('${a.id}')">✏️</button><button class="del" title="Remover" onclick="delAccount('${a.id}')">🗑</button></div></div><div class="acc-info-row"><span class="acc-info-lbl">Posts:</span><span class="acc-info-val">${c.todos||0}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Janela:</span><span class="acc-info-val">${a.startTime}-${a.endTime}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Vídeos/dia:</span><span class="acc-info-val">${a.postsPerDay}</span></div><div class="acc-info-row"><span class="acc-info-lbl">Intervalo:</span><span class="acc-info-val">${a.intervalMinutes}min</span></div></div>`;
   }).join('');
@@ -928,7 +952,17 @@ async function testAccount(id){toast('Testando...','in');const r=await api('/api
 async function delAccount(id){if(!confirm('Remover esta conta?'))return;await api('/api/accounts/'+id,{method:'DELETE'});toast('Removida','wa');loadAccounts();}
 
 // Videos
-async function populateAccFilter(){const data=await api('/api/accounts');accounts=data;updateSbAccounts();const sel=document.getElementById('accFilter');const cur=sel.value;sel.innerHTML='<option value="all">Todas</option>'+accounts.map(a=>'<option value="'+a.id+'" '+(a.id===cur?'selected':'')+'>@'+(a.username||a.label)+'</option>').join('');}
+async function populateAccFilter(){
+  const data=await api('/api/accounts');accounts=data;updateSbAccounts();
+  // Filtro de categoria
+  const catSel=document.getElementById('catFilter');
+  if(catSel){const curCat=catSel.value;catSel.innerHTML='<option value="all">Todas categorias</option>'+categories.map(c=>'<option value="'+c.id+'" '+(c.id===curCat?'selected':'')+'>'+c.name+'</option>').join('');}
+  // Filtrar contas pela categoria selecionada
+  const catId=catSel?catSel.value:'all';
+  const filtered=catId==='all'?accounts:accounts.filter(a=>a.categoryId===catId);
+  const sel=document.getElementById('accFilter');const cur=sel.value;
+  sel.innerHTML='<option value="all">Todas</option>'+filtered.map(a=>'<option value="'+a.id+'" '+(a.id===cur?'selected':'')+'>@'+(a.username||a.label)+'</option>').join('');
+}
 function filterTab(status,btn){currentStatus=status;document.querySelectorAll('.tab').forEach(t=>t.classList.remove('act'));btn.classList.add('act');loadVideos();}
 async function loadVideos(){
   const accId=document.getElementById('accFilter').value;const date=document.getElementById('dateFilter').value;
@@ -1053,6 +1087,8 @@ async function openEditAccount(id){
   document.getElementById('ea-et').value=a.endTime||'23:00';
   document.getElementById('ea-ppd').value=a.postsPerDay||40;
   document.getElementById('ea-reschedule').checked=false;
+  // Categoria
+  const eaCat=document.getElementById('ea-cat');if(eaCat){eaCat.innerHTML='<option value="">Sem categoria</option>'+categories.map(c=>'<option value="'+c.id+'"'+(acc.categoryId===c.id?' selected':'')+'>'+c.name+'</option>').join('');}
   // Buscar pendentes da conta
   try{
     const vr=await api('/api/videos?accountId='+id+'&status=pendente&limit=99999');
@@ -1151,6 +1187,93 @@ async function pollProcessing(){
   if(!_pollIds.size){clearInterval(_pollTimer);_pollTimer=null;}
 }
 
+// ── CATEGORIAS ──────────────────────────────────────────────────────────
+async function loadCategories() {
+  categories = await api('/api/categories').catch(() => []);
+  renderCatList();
+  // Atualizar select no modal de add conta
+  const sel = document.getElementById('aa-cat');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Sem categoria</option>' +
+      categories.map(c => '<option value="' + c.id + '"' + (c.id===cur?' selected':'') + '>' + c.name + '</option>').join('');
+  }
+  // Atualizar filtro de categoria
+  const catSel = document.getElementById('catFilter');
+  if (catSel) {
+    const cur = catSel.value;
+    catSel.innerHTML = '<option value="all">Todas categorias</option>' +
+      categories.map(c => '<option value="' + c.id + '"' + (c.id===cur?' selected':'') + '>' + c.name + '</option>').join('');
+  }
+}
+
+function renderCatList() {
+  const el = document.getElementById('catList');
+  if (!el) return;
+  if (!categories.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--tx3);padding:4px 0">Nenhuma categoria criada</div>';
+    return;
+  }
+  el.innerHTML = categories.map(function(c) {
+    return '<div class="cat-item">' +
+      '<div class="cat-dot" style="background:' + c.color + '"></div>' +
+      '<span class="cat-name">' + c.name + '</span>' +
+      '<div class="cat-actions">' +
+      '<button class="icon-btn" title="Renomear" onclick="renameCategoryById(' + JSON.stringify(c.id) + ')">✏️</button>' +
+      '<button class="icon-btn danger" title="Excluir" onclick="deleteCategoryById(' + JSON.stringify(c.id) + ')">✕</button>' +
+      '</div></div>';
+  }).join('');
+}
+
+async function createCategory() {
+  const name = document.getElementById('cat-name-input').value.trim();
+  const color = document.getElementById('cat-color-input').value;
+  if (!name) { toast('Digite um nome', 'er'); return; }
+  await api('/api/categories', { method: 'POST', body: JSON.stringify({ name, color }) });
+  document.getElementById('cat-name-input').value = '';
+  await loadCategories();
+  toast('✅ Categoria "' + name + '" criada!', 'ok');
+}
+
+async function renameCategoryById(id) {
+  const c = categories.find(x => x.id === id);
+  if (!c) return;
+  const name = prompt('Novo nome:', c.name);
+  if (!name || !name.trim()) return;
+  await api('/api/categories/' + id, { method: 'PUT', body: JSON.stringify({ name: name.trim(), color: c.color }) });
+  await loadCategories();
+}
+
+async function deleteCategoryById(id) {
+  const c = categories.find(x => x.id === id);
+  if (!c) return;
+  if (!confirm('Excluir categoria "' + c.name + '"? As contas associadas ficarão sem categoria.')) return;
+  await api('/api/categories/' + id, { method: 'DELETE' });
+  await loadCategories();
+  toast('Categoria excluída', 'wa');
+}
+
+async function renameCategory(id, currentName, currentColor) {
+  const name = prompt('Novo nome:', currentName);
+  if (!name || !name.trim()) return;
+  await api('/api/categories/' + id, { method: 'PUT', body: JSON.stringify({ name: name.trim(), color: currentColor }) });
+  await loadCategories();
+}
+
+async function deleteCategory(id, name) {
+  if (!confirm('Excluir categoria "' + name + '"? As contas associadas ficarão sem categoria.')) return;
+  await api('/api/categories/' + id, { method: 'DELETE' });
+  await loadCategories();
+  toast('Categoria excluída', 'wa');
+}
+
+function getCatTag(categoryId) {
+  if (!categoryId) return '';
+  const c = categories.find(x => x.id === categoryId);
+  if (!c) return '';
+  return '<span class="cat-tag" style="background:' + c.color + '22;color:' + c.color + ';border:1px solid ' + c.color + '44">' + c.name + '</span>';
+}
+
 async function rescheduleAcc(id, name) {
   if (!confirm('Reagendar todos os vídeos pendentes de @' + name + ' com o intervalo correto?')) return;
   toast('Reagendando...', 'in');
@@ -1217,6 +1340,7 @@ setInterval(()=>{if(!currentUser)return;const a=document.querySelector('.panel.a
     <h3>✏️ Editar Conta</h3>
     <input type="hidden" id="ea-id">
     <div class="field"><label>Label / Apelido</label><input id="ea-label" placeholder="Nome de identificação"></div>
+    <div class="field"><label>Categoria</label><select id="ea-cat"><option value="">Sem categoria</option></select></div>
     <div class="r2">
       <div class="field"><label>Início da janela</label><input type="time" id="ea-st" value="02:00" oninput="updateEaPreview()"></div>
       <div class="field"><label>Fim da janela</label><input type="time" id="ea-et" value="23:00" oninput="updateEaPreview()"></div>
