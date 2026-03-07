@@ -571,6 +571,8 @@ router.get('/dashboard', (req, res) => {
   const nextMap = db.getNextScheduledPerAccount(uid, adm);
   // Uma query só: último postado por conta
   const lastMap = db.getLastPostedPerAccount(uid, adm);
+  // Uma query só: último pendente por conta (data do último vídeo na fila)
+  const lastPendMap = db.getLastPendingPerAccount(uid, adm);
   // Próximos 8 pendentes para lista
   const upcoming = db.getVideos({ status: 'pendente', limit: 8, userId: uid, isAdmin: adm });
   // Postados hoje
@@ -589,6 +591,7 @@ router.get('/dashboard', (req, res) => {
     counts: counts[a.id] || { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 },
     nextScheduled: nextMap[a.id] || null,
     lastPosted: lastMap[a.id] || null,
+    lastPending: lastPendMap[a.id] || null,
   }));
 
   res.json({ stats, accStats, upcoming, todayCount });
