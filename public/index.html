@@ -881,7 +881,7 @@ async function loadDash(){
     const barMax=Math.max(post,pend,err,1);
     const pPost=Math.round(post/barMax*100),pPend=Math.round(pend/barMax*100),pErr=Math.round(err/barMax*100);
     return `<div class="dash-acc-card">
-      <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div><div class="dash-acc-name">@${a.username||a.label}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div></div>
+      <div class="dash-acc-header"><div class="dash-acc-av">📷</div><div style="flex:1"><div class="dash-acc-name">@${a.username||a.label}</div><div class="dash-acc-sub">${a.postsPerDay}×/dia · ${a.startTime}–${a.endTime}</div></div><button class="icon-btn" title="Reagendar pendentes com intervalo correto" onclick="rescheduleAcc('${a.id}','${a.username||a.label}')">🔄</button></div>
       <div class="dash-acc-bars">
         <div class="dash-bar-row"><span class="dash-bar-lbl">✅ Postados</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPost}%;background:var(--gr)"></div></div><span class="dash-bar-val c-g">${post}</span></div>
         <div class="dash-bar-row"><span class="dash-bar-lbl">⏰ Pendentes</span><div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pPend}%;background:var(--ye)"></div></div><span class="dash-bar-val c-y">${pend}</span></div>
@@ -1149,6 +1149,15 @@ async function pollProcessing(){
   }
   toRemove.forEach(id=>_pollIds.delete(id));
   if(!_pollIds.size){clearInterval(_pollTimer);_pollTimer=null;}
+}
+
+async function rescheduleAcc(id, name) {
+  if (!confirm('Reagendar todos os vídeos pendentes de @' + name + ' com o intervalo correto?')) return;
+  toast('Reagendando...', 'in');
+  const r = await api('/api/accounts/' + id + '/reschedule', { method: 'POST', body: JSON.stringify({}) });
+  if (r.error) { toast('Erro: ' + r.error, 'er'); return; }
+  toast('✅ ' + (r.rescheduled || 0) + ' vídeos reagendados!', 'ok');
+  loadDash();
 }
 
 function renderDailySchedule(dailySchedule) {
