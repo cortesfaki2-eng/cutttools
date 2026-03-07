@@ -1,684 +1,420 @@
-const express = require('express');
-const multer = require('multer');
-const AdmZip = require('adm-zip');
+const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
-const { v4: uuid } = require('uuid');
-const db = require('./db');
-const ig = require('./instagram');
-const b2 = require('./b2');
+const crypto = require('crypto');
 
-const router = express.Router();
-// diskStorage — evita estourar RAM no servidor (vídeos são grandes)
-const UPLOAD_DIR = path.join(__dirname, '../../uploads/temp');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-const storage = multer.diskStorage({
-  destination: UPLOAD_DIR,
-  filename: (req, file, cb) => {
-    const safe = Buffer.from(file.originalname, 'latin1').toString('utf8');
-    cb(null, uuid() + '_' + safe);
-  }
-});
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 * 1024 } });
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
+const DB_FILE = path.join(DATA_DIR, 'cuttools.db');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// Lock por conta para evitar race condition
-const scheduleLocks = new Map();
-async function withScheduleLock(accountId, fn) {
-  while (scheduleLocks.get(accountId)) await new Promise(r => setTimeout(r, 100));
-  scheduleLocks.set(accountId, true);
-  try { return await fn(); } finally { scheduleLocks.delete(accountId); }
+let db = null;
+
+// ── Hash de senha ──
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return salt + ':' + hash;
+}
+function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(':');
+  const test = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return hash === test;
 }
 
-function getLastScheduledTime(accountId) {
-  const all = db.getVideos({ accountId, status: 'pendente', limit: 99999 });
-  if (!all.length) return null;
-  const sorted = all.sort((a, b) => new Date(b.scheduledFor) - new Date(a.scheduledFor));
-  return new Date(sorted[0].scheduledFor);
-}
-
-function configureB2FromDB() {
-  const s = db.getAllSettings();
-  if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
-    b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
-  }
-}
-
-const { adminMiddleware } = require('./auth');
-
-// helpers
-const isAdmin = req => req.user && req.user.role === 'admin';
-const userId = req => req.user && req.user.id;
-
-// ══ SETTINGS ══════════════════════════════════════════════════════
-router.get('/settings', (req, res) => {
-  // Usuários comuns só veem se B2 está configurado, não as chaves
-  if (!isAdmin(req)) return res.json({ configured: db.isConfigured ? true : !!(db.getSetting('b2KeyId') && db.getSetting('b2Bucket')) });
-  const s = db.getAllSettings();
-  res.json({
-    b2KeyId: s.b2KeyId || '',
-    b2AppKey: s.b2AppKey ? '***' + s.b2AppKey.slice(-4) : '',
-    b2Bucket: s.b2Bucket || '',
-    b2Endpoint: s.b2Endpoint || '',
-    b2PublicUrl: s.b2PublicUrl || '',
-    timezoneOffset: s.timezoneOffset || '-3',
-  });
-});
-
-router.post('/settings', adminMiddleware, (req, res) => {
-  const { b2KeyId, b2AppKey, b2Bucket, b2Endpoint, b2PublicUrl } = req.body;
-  if (b2KeyId) db.setSetting('b2KeyId', b2KeyId);
-  if (b2AppKey && !b2AppKey.startsWith('***')) db.setSetting('b2AppKey', b2AppKey);
-  if (b2Bucket) db.setSetting('b2Bucket', b2Bucket);
-  if (b2Endpoint) db.setSetting('b2Endpoint', b2Endpoint);
-  if (b2PublicUrl !== undefined) db.setSetting('b2PublicUrl', b2PublicUrl);
-  if (req.body.timezoneOffset !== undefined) db.setSetting('timezoneOffset', req.body.timezoneOffset);
-  configureB2FromDB();
-  res.json({ success: true });
-});
-
-// ══ ACCOUNTS ══════════════════════════════════════════════════════
-router.get('/accounts', (req, res) => {
-  const accounts = db.getAccounts(userId(req), isAdmin(req)).map(a => ({ ...a, accessToken: a.accessToken ? a.accessToken.slice(0,8)+'...' : '' }));
-  res.json(accounts);
-});
-
-router.post('/accounts', async (req, res) => {
-  const { accessToken, label, postsPerDay, startTime, endTime, intervalMode, categoryId } = req.body;
-  if (!accessToken) return res.status(400).json({ error: 'Token obrigatório' });
-
-  try {
-    const info = await ig.fetchAccountFromToken(accessToken);
-    const existing = db.getAccountByIgId(info.igAccountId);
-    if (existing) return res.status(400).json({ error: `Conta @${info.username} já cadastrada` });
-
-    const ppd = parseInt(postsPerDay) || 40;
-    const st = startTime || '02:00';
-    const et = endTime || '23:00';
-    const [sh, sm] = st.split(':').map(Number);
-    const [eh, em] = et.split(':').map(Number);
-    const windowMins = (eh * 60 + em) - (sh * 60 + sm);
-    const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
-
-    const account = db.insertAccount({
-      id: uuid(), userId: userId(req), accessToken, igAccountId: info.igAccountId, username: info.username,
-      label: label || info.username, accountType: info.accountType,
-      postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins, categoryId: categoryId||null,
-      intervalMode: intervalMode || 'inteligente', status: 'active', totalPosts: 0,
-    });
-
-    res.json({ success: true, account: { ...account, accessToken: accessToken.slice(0,8)+'...' } });
-  } catch(e) {
-    res.status(400).json({ error: e.response?.data?.error?.message || e.message });
-  }
-});
-
-router.put('/accounts/:id', (req, res) => {
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  const { label, postsPerDay, startTime, endTime, intervalMode, accessToken, categoryId } = req.body;
-  const ppd = parseInt(postsPerDay);
-  const [sh, sm] = (startTime||'02:00').split(':').map(Number);
-  const [eh, em] = (endTime||'23:00').split(':').map(Number);
-  const windowMins = (eh * 60 + em) - (sh * 60 + sm);
-  const intervalMins = ppd > 1 ? Math.floor(windowMins / (ppd - 1)) : windowMins;
-  const patch = { label, postsPerDay: ppd, startTime, endTime, intervalMinutes: intervalMins, intervalMode, categoryId: categoryId !== undefined ? (categoryId||null) : undefined };
-  if (accessToken) patch.accessToken = accessToken;
-  db.updateAccount(req.params.id, patch);
-  res.json({ success: true });
-});
-
-
-// ── PRESIGNED UPLOAD ──────────────────────────────────────────────
-router.get('/videos/presign', async (req, res) => {
-  const { filename, accountId, contentType } = req.query;
-  if (!accountId || !filename) return res.status(400).json({ error: 'accountId e filename obrigatorios' });
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-  configureB2FromDB();
-  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
-  try {
-    const ext = path.extname(filename);
-    const base = path.basename(filename, ext).replace(/[^a-zA-Z0-9._-]/g, '_');
-    const key = account.username + '/' + Date.now() + '_' + base + ext;
-    const { uploadUrl, fileUrl } = await b2.getPresignedUploadUrl(key, contentType || 'video/mp4');
-    res.json({ uploadUrl, publicFileUrl: fileUrl, key });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── CONFIRM LEGADO (1 arquivo) — mantido para compatibilidade ──
-router.post('/videos/confirm', async (req, res) => {
-  const { accountId, key, publicFileUrl, originalName, bytes, caption, hashtags, batchId } = req.body;
-  if (!accountId || !key) return res.status(400).json({ error: 'accountId e key obrigatorios' });
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-  try {
-    const { startTime, endTime, postsPerDay, intervalMinutes } = account;
-    const [sh, sm] = startTime.split(':').map(Number);
-    const [eh, em] = (endTime||'23:00').split(':').map(Number);
-    const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-    const uid = userId(req);
-    await withScheduleLock(accountId, async () => {
-      const lastScheduled = getLastScheduledTime(accountId);
-      const dates = generateSchedule(1, postsPerDay, intervalMinutes, sh, sm, eh, em, lastScheduled, offsetHours);
-      const video = db.insertVideo({ id: uuid(), userId: uid, accountId, username: account.username, originalName: originalName || key, batchName: batchId || originalName || key, b2Url: publicFileUrl, b2FileId: key, b2FileName: key, bytes: parseInt(bytes)||0, duration: 0, caption: caption||'', hashtags: hashtags||'', cycle: 1, scheduledFor: dates[0].toISOString(), status: 'pendente' });
-      ig.scheduleVideo(video.id);
-      db.updateAccount(accountId, { totalPosts: (account.totalPosts||0) + 1 });
-    });
-    res.json({ success: true });
-  } catch(e) { console.error('[Confirm]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-
-// ── PROGRESSO DE POSTAGEM — polling do frontend durante status 'processando'
-router.get('/videos/:id/progress', (req, res) => {
-  const video = db.getVideoById(req.params.id);
-  if (!video) return res.status(404).json({ error: 'Video nao encontrado' });
-  // errorMsg armazena '[pct%] msg' enquanto processando
-  let pct = 0, msg = '';
-  if (video.status === 'processando' && video.errorMsg) {
-    const m = video.errorMsg.match(/^\[(\d+)%\]\s*(.*)$/);
-    if (m) { pct = parseInt(m[1]); msg = m[2]; }
-    else msg = video.errorMsg;
-  } else if (video.status === 'postado') { pct = 100; msg = 'Publicado! ✅'; }
-  else if (video.status === 'erro') { pct = 0; msg = video.errorMsg || 'Erro'; }
-  res.json({ id: video.id, status: video.status, pct, msg, igPostId: video.igPostId });
-});
-
-// ── UPLOAD-ONLY — faz upload pro R2 via servidor (garante ContentType correto) e retorna url+key
-router.post('/videos/upload-only', upload.single('videos'), async (req, res) => {
-  const { accountId } = req.body;
-  if (!accountId || !req.file) return res.status(400).json({ error: 'accountId e arquivo obrigatorios' });
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-  configureB2FromDB();
-  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o storage primeiro' });
-  try {
-    const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-    const uploaded = await b2.uploadStream(req.file.path, req.file.size, originalName, account.username);
-    fs.unlink(req.file.path, () => {}); // limpar disco após upload
-    res.json({ success: true, url: uploaded.url, key: uploaded.fileId, fileName: uploaded.fileName, bytes: uploaded.bytes });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ── STATUS DE VÍDEO — polling de progresso durante processamento ──
-router.get('/videos/:id/status', (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v) return res.status(404).json({ error: 'not found' });
-  const acc = db.getAccountByIdForUser(v.accountId, userId(req), isAdmin(req));
-  if (!acc) return res.status(403).json({ error: 'forbidden' });
-  res.json({ id: v.id, status: v.status, errorMsg: v.errorMsg, igPostId: v.igPostId, postedAt: v.postedAt, updatedAt: v.updatedAt });
-});
-
-// ── CONFIRM-BATCH — recebe lote inteiro já ordenado, cria ciclos corretamente ──
-// Padrão de ciclos: 1-2-3-4-5-6 | 1-2-3-4-5-6 (intercalado, não em bloco)
-router.post('/videos/confirm-batch', async (req, res) => {
-  const { accountId, batchId, cycles, caption, hashtags, videos } = req.body;
-  // videos: [{key, publicFileUrl, originalName, bytes}] — JÁ em ordem correta
-  if (!accountId || !Array.isArray(videos) || !videos.length)
-    return res.status(400).json({ error: 'accountId e videos obrigatorios' });
-
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta nao encontrada' });
-
-  try {
-    const numCycles = Math.max(1, parseInt(cycles) || 1);
-    const { startTime, endTime, postsPerDay, intervalMinutes } = account;
-    const [sh, sm] = startTime.split(':').map(Number);
-    const [eh, em] = (endTime||'23:00').split(':').map(Number);
-    const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-    const uid = userId(req);
-    const bName = batchId || ('batch_' + Date.now());
-
-    // Total de slots = N vídeos × ciclos, intercalados: v1c1, v2c1, v3c1... v1c2, v2c2...
-    // Construir lista ordenada: para cada ciclo, todos os vídeos em ordem
-    const slots = [];
-    for (let c = 1; c <= numCycles; c++) {
-      for (const v of videos) {
-        slots.push({ ...v, cycle: c });
-      }
-    }
-
-    const totalSlots = slots.length;
-
-    // Validar se é possível agendar postsPerDay na janela configurada
-    const windowMins = (eh * 60 + em) - (sh * 60 + sm);
-    const intervalCalc = postsPerDay <= 1 ? windowMins : Math.floor(windowMins / (postsPerDay - 1));
-    if (intervalCalc < 1) {
-      return res.status(400).json({
-        error: `Impossível agendar ${postsPerDay} posts/dia na janela ${account.startTime}–${account.endTime} (${windowMins} min). ` +
-               `Máximo possível: ${windowMins} posts/dia (1 por minuto). Reduza posts/dia ou amplie a janela.`
-      });
-    }
-
-    const dates = generateSchedule(totalSlots, postsPerDay, intervalMinutes, sh, sm, eh, em, getLastScheduledTime(accountId), offsetHours);
-    if (!dates.length) {
-      return res.status(400).json({ error: 'Não foi possível gerar agenda. Verifique a configuração de horários da conta.' });
-    }
-
-    await withScheduleLock(accountId, async () => {
-      for (let i = 0; i < slots.length; i++) {
-        const s = slots[i];
-        const video = db.insertVideo({
-          id: uuid(), userId: uid, accountId, username: account.username,
-          originalName: s.originalName, batchName: bName,
-          b2Url: s.publicFileUrl, b2FileId: s.key, b2FileName: s.key,
-          bytes: parseInt(s.bytes)||0, duration: 0,
-          caption: caption||'', hashtags: hashtags||'',
-          cycle: s.cycle,
-          scheduledFor: dates[i].toISOString(),
-          status: 'pendente'
-        });
-        ig.scheduleVideo(video.id);
-      }
-      db.updateAccount(accountId, { totalPosts: (account.totalPosts||0) + totalSlots });
-      console.log(`[ConfirmBatch] @${account.username}: ${videos.length} vídeos × ${numCycles} ciclos = ${totalSlots} agendados`);
-    });
-
-    res.json({ success: true, scheduled: totalSlots });
-  } catch(e) { console.error('[ConfirmBatch]', e.message); res.status(500).json({ error: e.message }); }
-});
-
-// ── CATEGORIAS ──────────────────────────────────────────────────────────
-router.get('/categories', (req, res) => {
-  res.json(db.getCategories(userId(req), isAdmin(req)));
-});
-
-router.post('/categories', (req, res) => {
-  const { name, color } = req.body;
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
-  const cat = db.insertCategory({ id: uuid(), userId: userId(req), name: name.trim(), color: color || '#6c63ff' });
-  res.json(cat);
-});
-
-router.put('/categories/:id', (req, res) => {
-  const { name, color } = req.body;
-  db.updateCategory(req.params.id, { name, color });
-  res.json({ success: true });
-});
-
-router.delete('/categories/:id', (req, res) => {
-  db.deleteCategory(req.params.id);
-  res.json({ success: true });
-});
-
-// ── RESCHEDULE ────────────────────────────────────────────────────
-router.post('/accounts/:id/reschedule', async (req, res) => {
-  const { label, postsPerDay, startTime, endTime } = req.body;
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta nao encontrada' });
-
-  const ppd = parseInt(postsPerDay) || acc.postsPerDay;
-  const st = startTime || acc.startTime;
-  const et = endTime || acc.endTime;
-  const [sh, sm] = st.split(':').map(Number);
-  const [eh, em] = et.split(':').map(Number);
-  const windowMins = (eh*60+em) - (sh*60+sm);
-  const intervalMins = ppd > 1 ? Math.floor(windowMins/(ppd-1)) : windowMins;
-
-  db.updateAccount(req.params.id, { label: label||acc.label, postsPerDay: ppd, startTime: st, endTime: et, intervalMinutes: intervalMins });
-
-  const pending = db.getVideos({ accountId: req.params.id, status: 'pendente', limit: 99999 });
-  if (!pending.length) return res.json({ success: true, rescheduled: 0 });
-
-  pending.forEach(v => ig.cancelJob(v.id));
-
-  const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-
-  // Usar generateSchedule — mesmo algoritmo dos novos uploads, começa amanhã
-  const dates = generateSchedule(pending.length, ppd, intervalMins, sh, sm, eh, em, null, offsetHours);
-  if (!dates.length) return res.status(400).json({ error: 'Configuração inválida — não foi possível gerar agenda' });
-
-  for (let i = 0; i < pending.length; i++) {
-    const scheduledFor = (dates[i] || dates[dates.length - 1]).toISOString();
-    db.updateVideo(pending[i].id, { scheduledFor, status: 'pendente', errorMsg: null });
-    ig.scheduleVideo(pending[i].id);
-  }
-
-  console.log('[Reschedule] @' + acc.username + ': ' + pending.length + ' videos reagendados');
-  res.json({ success: true, rescheduled: pending.length });
-});
-
-router.delete('/accounts/:id', (req, res) => {
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  db.deleteAccount(req.params.id);
-  res.json({ success: true });
-});
-
-router.post('/accounts/:id/test', async (req, res) => {
-  const acc = db.getAccountByIdForUser(req.params.id, userId(req), isAdmin(req));
-  if (!acc) return res.status(404).json({ error: 'Conta não encontrada' });
-  try {
-    const info = await ig.fetchAccountFromToken(acc.accessToken);
-    res.json({ success: true, username: info.username });
-  } catch(e) {
-    res.status(400).json({ error: e.response?.data?.error?.message || e.message });
-  }
-});
-
-// ══ VIDEOS ════════════════════════════════════════════════════════
-router.get('/videos', (req, res) => {
-  const { accountId, status, date, limit = 300, offset = 0, categoryId } = req.query;
-  let effectiveAccountId = accountId;
-  if (categoryId && categoryId !== 'all' && (!accountId || accountId === 'all')) {
-    const accs = db.getAccounts(userId(req), isAdmin(req)).filter(a => a.categoryId === categoryId);
-    effectiveAccountId = accs.length ? accs.map(a => a.id) : ['__none__'];
-  }
-  const videos = db.getVideos({ accountId: effectiveAccountId, status, date, limit: parseInt(limit), offset: parseInt(offset), userId: userId(req), isAdmin: isAdmin(req) });
-  const counts = db.getVideoCounts(accountId, userId(req), isAdmin(req));
-  res.json({ videos, counts });
-});
-
-router.post('/videos/upload', upload.array('videos', 500), async (req, res) => {
-  const { accountId, caption, hashtags, cycles, batchName } = req.body;
-  if (!accountId) return res.status(400).json({ error: 'Selecione uma conta' });
-
-  const account = db.getAccountByIdForUser(accountId, userId(req), isAdmin(req));
-  if (!account) return res.status(400).json({ error: 'Conta não encontrada' });
-
-  configureB2FromDB();
-  if (!b2.isConfigured()) return res.status(400).json({ error: 'Configure o Backblaze B2 primeiro em ⚙️ Configurações' });
-
-  // Extrair vídeos de ZIPs
-  const allFiles = [...(req.files || [])];
-  const videoFiles = allFiles.filter(f => !f.originalname.toLowerCase().endsWith('.zip'));
-  const zipFiles = allFiles.filter(f => f.originalname.toLowerCase().endsWith('.zip'));
-
-  for (const zipFile of zipFiles) {
-    try {
-      const zip = new AdmZip(zipFile.path);
-      for (const entry of zip.getEntries()) {
-        if (/\.(mp4|mov|avi|mkv)$/i.test(entry.entryName) && !entry.isDirectory) {
-          const outName = uuid() + '_' + path.basename(entry.entryName);
-          const outPath = path.join(UPLOAD_DIR, outName);
-          fs.writeFileSync(outPath, entry.getData());
-          videoFiles.push({ path: outPath, originalname: path.basename(entry.entryName), size: entry.header.size });
-        }
-      }
-      fs.unlink(zipFile.path, () => {});
-    } catch(e) { console.error('[ZIP]', e.message); }
-  }
-
-  if (!videoFiles.length) return res.status(400).json({ error: 'Nenhum vídeo encontrado nos arquivos enviados' });
-
-  const numCycles = Math.max(1, parseInt(cycles) || 1);
-  const expandedFiles = [];
-  for (let c = 1; c <= numCycles; c++) videoFiles.forEach(f => expandedFiles.push({ ...f, cycle: c }));
-
-  // Gerar agenda
-  const { startTime, postsPerDay, intervalMinutes } = account;
-  const [sh, sm] = startTime.split(':').map(Number);
-  const scheduledDates = generateSchedule(expandedFiles.length, postsPerDay, intervalMinutes, sh, sm);
-
-  const results = [];
-  for (let i = 0; i < expandedFiles.length; i++) {
-    const file = expandedFiles[i];
-    try {
-      console.log(`[Upload] ${file.originalname} → B2... (${i+1}/${expandedFiles.length})`);
-      const uploaded = await b2.uploadFile(file.path, file.originalname, account.username);
-      fs.unlink(file.path, () => {});
-
-      const video = db.insertVideo({
-        id: uuid(), userId: userId(req), accountId, username: account.username,
-        originalName: file.originalname, batchName: batchName || file.originalname,
-        b2Url: uploaded.url, b2FileId: uploaded.fileId, b2FileName: uploaded.fileName,
-        bytes: uploaded.bytes, duration: 0,
-        caption: caption || '', hashtags: hashtags || '',
-        cycle: file.cycle, scheduledFor: scheduledDates[i].toISOString(),
-        status: 'pendente',
-      });
-
-      ig.scheduleVideo(video.id);
-      results.push({ id: video.id, name: file.originalname, scheduled: scheduledDates[i] });
-    } catch(e) {
-      try { fs.unlinkSync(file.path); } catch {}
-      console.error(`[Upload] ❌ ${file.originalname}: ${e.message}`);
-      results.push({ name: file.originalname, error: e.message });
-    }
-  }
-
-  const ok = results.filter(r => !r.error).length;
-  db.updateAccount(accountId, { totalPosts: (account.totalPosts || 0) + ok });
-
-  res.json({ success: true, total: results.length, ok, results });
-});
-
-// Valida e retorna o intervalo em minutos para caber postsPerDay na janela
-// Retorna null se for impossível (janela menor que 1 min por post)
-function calcInterval(postsPerDay, startH, startM, endH, endM) {
-  const windowMins = (endH * 60 + endM) - (startH * 60 + startM);
-  if (windowMins <= 0) return null;
-  if (postsPerDay <= 1) return windowMins;
-  const interval = Math.floor(windowMins / (postsPerDay - 1));
-  if (interval < 1) return null; // impossível
-  return interval;
-}
-
-// Gera datas de agendamento distribuídas uniformemente na janela diária
-// Usa offsetHours para converter horário local (padrão BRT -3) para UTC
-function generateSchedule(total, postsPerDay, _ignored, startH, startM, endH=23, endM=0, lastScheduled=null, offsetHours=-3) {
-  const intervalMinutes = calcInterval(postsPerDay, startH, startM, endH, endM);
-  if (!intervalMinutes) return [];
-
-  const dates = [];
-  const now = new Date();
-  const startUTC = startH - offsetHours; // ex: 02h BRT (-3) → 05h UTC
-  const windowMins = (endH * 60 + endM) - (startH * 60 + startM);
-
-  // Início da janela do dia de uma data — sempre <= date
-  function windowStartOf(date) {
-    const d = new Date(date);
-    d.setUTCHours(startUTC, startM, 0, 0);
-    if (d > date) d.setUTCDate(d.getUTCDate() - 1);
-    return d;
-  }
-
-  let current, slotInDay, dayWS;
-
-  function goToNextDay() {
-    slotInDay = 0;
-    dayWS = new Date(dayWS);
-    dayWS.setUTCDate(dayWS.getUTCDate() + 1);
-    current = new Date(dayWS);
-  }
-
-  if (lastScheduled && lastScheduled > now) {
-    dayWS = windowStartOf(lastScheduled);
-    const off = (lastScheduled - dayWS) / 60000;
-    const slotIndex = Math.round(off / intervalMinutes);
-    const next = new Date(dayWS.getTime() + (slotIndex + 1) * intervalMinutes * 60000);
-    const nextOff = (next - dayWS) / 60000;
-    if (nextOff > windowMins) {
-      dayWS.setUTCDate(dayWS.getUTCDate() + 1);
-      current = new Date(dayWS);
-      slotInDay = 0;
-    } else {
-      current = next;
-      slotInDay = slotIndex + 1;
-    }
+async function init() {
+  const SQL = await initSqlJs();
+  if (fs.existsSync(DB_FILE)) {
+    db = new SQL.Database(fs.readFileSync(DB_FILE));
   } else {
-    dayWS = windowStartOf(now);
-    const dayEnd = new Date(dayWS.getTime() + windowMins * 60000);
-    const candidate = new Date(now.getTime() + 60000);
-
-    if (candidate <= dayWS) {
-      current = new Date(dayWS); slotInDay = 0;
-    } else if (candidate <= dayEnd) {
-      const elapsed = Math.ceil((candidate - dayWS) / (intervalMinutes * 60000));
-      const snapped = new Date(dayWS.getTime() + elapsed * intervalMinutes * 60000);
-      if (snapped <= dayEnd) { current = snapped; slotInDay = elapsed; }
-      else { goToNextDay(); }
-    } else {
-      goToNextDay();
-    }
+    db = new SQL.Database();
   }
 
-  for (let i = 0; i < total; i++) {
-    dates.push(new Date(current));
-    slotInDay++;
+  // ── Tabelas originais ──
+  db.run(`CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, user_id TEXT DEFAULT NULL, access_token TEXT NOT NULL, ig_account_id TEXT NOT NULL UNIQUE, username TEXT, label TEXT, account_type TEXT DEFAULT 'BUSINESS', posts_per_day INTEGER DEFAULT 40, start_time TEXT DEFAULT '02:00', end_time TEXT DEFAULT '23:00', interval_minutes INTEGER DEFAULT 31, interval_mode TEXT DEFAULT 'inteligente', status TEXT DEFAULT 'active', total_posts INTEGER DEFAULT 0, added_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));`);
+  db.run(`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, user_id TEXT DEFAULT NULL, account_id TEXT NOT NULL, username TEXT, original_name TEXT, batch_name TEXT, b2_url TEXT DEFAULT '', b2_file_id TEXT DEFAULT '', b2_file_name TEXT DEFAULT '', bytes INTEGER DEFAULT 0, duration REAL DEFAULT 0, caption TEXT DEFAULT '', hashtags TEXT DEFAULT '', cycle INTEGER DEFAULT 1, scheduled_for TEXT, status TEXT DEFAULT 'pendente', ig_post_id TEXT, posted_at TEXT, error_msg TEXT, retries INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')));`);
 
-    if (slotInDay >= postsPerDay) {
-      goToNextDay();
-    } else {
-      // Offset calculado a partir do dayWS fixo deste dia — nunca muda até goToNextDay
-      const next = new Date(dayWS.getTime() + slotInDay * intervalMinutes * 60000);
-      const off = (next - dayWS) / 60000;
-      if (off > windowMins) {
-        goToNextDay();
-      } else {
-        current = next;
-      }
-    }
+  // Tabela de categorias de contas
+  db.run(`CREATE TABLE IF NOT EXISTS account_categories (id TEXT PRIMARY KEY, user_id TEXT, name TEXT NOT NULL, color TEXT DEFAULT '#6c63ff', created_at TEXT DEFAULT (datetime('now')));`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cat_user ON account_categories(user_id);`);
+
+  // Migration: adicionar user_id nas tabelas antigas se não existir
+  try { db.run(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT NULL`); } catch(e) {}
+  try { db.run(`ALTER TABLE videos ADD COLUMN user_id TEXT DEFAULT NULL`); } catch(e) {}
+  try { db.run(`ALTER TABLE accounts ADD COLUMN category_id TEXT DEFAULT NULL`); } catch(e) {}
+  db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_vs ON videos(status);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_va ON videos(account_id);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_vsch ON videos(scheduled_for);`);
+
+  // ── Tabelas de autenticação (NOVAS) ──
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'user',
+    plan TEXT DEFAULT 'free',
+    status TEXT DEFAULT 'active',
+    phone TEXT DEFAULT '',
+    bio TEXT DEFAULT '',
+    login_count INTEGER DEFAULT 0,
+    last_login TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+  );`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS activity_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    email TEXT NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );`);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_logs_created ON activity_logs(created_at DESC);`);
+
+  // ── Criar admin padrão se não existir nenhum user ──
+  const userCount = get('SELECT COUNT(*) as cnt FROM users');
+  if (!userCount || userCount.cnt === 0) {
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@admin.com';
+    const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
+    const { v4: uuid } = require('uuid');
+    run('INSERT INTO users (id, email, name, password_hash, role, plan, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [uuid(), adminEmail, 'Administrador', hashPassword(adminPass), 'admin', 'enterprise', 'active']);
+    console.log(`[Auth] Admin criado: ${adminEmail} / ${adminPass}`);
+    console.log(`[Auth] ⚠️  TROQUE A SENHA do admin após o primeiro login!`);
   }
-  return dates;
+
+  persist();
+  setInterval(persist, 30000);
+  return db;
 }
 
-router.delete('/videos/:id', async (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  if (v && v.b2FileName) await b2.deleteFile(v.b2FileName).catch(() => {});
-  ig.cancelJob(req.params.id);
-  db.deleteVideo(req.params.id);
-  res.json({ success: true });
-});
+function persist() {
+  if (!db) return;
+  try { fs.writeFileSync(DB_FILE, Buffer.from(db.export())); } catch(e) { console.error('[DB]', e.message); }
+}
 
-router.post('/videos/cancel-pending', (req, res) => {
-  const { accountId } = req.query;
-  const pending = db.getVideos({ accountId, status: 'pendente', limit: 99999, userId: userId(req), isAdmin: isAdmin(req) });
-  pending.forEach(v => ig.cancelJob(v.id));
-  const cancelled = db.cancelPendingVideos(accountId, userId(req), isAdmin(req));
-  res.json({ success: true, cancelled });
-});
+function run(sql, p=[]) { db.run(sql, p); }
+function get(sql, p=[]) { const s=db.prepare(sql); s.bind(p); const r=s.step()?s.getAsObject():null; s.free(); return r; }
+function all(sql, p=[]) { const s=db.prepare(sql); s.bind(p); const rows=[]; while(s.step()) rows.push(s.getAsObject()); s.free(); return rows; }
 
-router.post('/videos/:id/retry', (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  db.updateVideo(req.params.id, { status: 'pendente', errorMsg: null, retries: 0 });
-  ig.scheduleVideo(req.params.id);
-  res.json({ success: true });
-});
+// ══ AUTH FUNCTIONS (NOVAS) ═══════════════════════════════════════
 
-router.post('/videos/:id/publish-now', (req, res) => {
-  const v = db.getVideoById(req.params.id);
-  if (!v || (!isAdmin(req) && v.userId && v.userId !== userId(req))) return res.status(404).json({ error: 'Vídeo não encontrado' });
-  // Forçar status pendente independente do estado atual (processando, erro, etc)
-  db.updateVideo(req.params.id, { status: 'pendente', scheduledFor: new Date().toISOString(), errorMsg: '', retries: 0 });
-  ig.cancelJob(req.params.id); // cancelar job agendado se existir
-  setTimeout(() => ig.executePost(req.params.id), 300);
-  res.json({ success: true });
-});
+function createUser({ id, email, name, password, role, plan }) {
+  const hash = hashPassword(password);
+  run('INSERT INTO users (id, email, name, password_hash, role, plan, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, email.toLowerCase().trim(), name.trim(), hash, role || 'user', plan || 'free', 'active']);
+  persist();
+  return getUserById(id);
+}
 
-// Stats detalhadas por conta (para dashboard)
-router.get('/accounts/stats', (req, res) => {
-  const accounts = db.getAccounts(userId(req), isAdmin(req));
-  const result = accounts.map(a => {
-    const counts = db.getVideoCounts(a.id, userId(req), isAdmin(req));
-    return { id: a.id, username: a.username, label: a.label, postsPerDay: a.postsPerDay, startTime: a.startTime, endTime: a.endTime, intervalMinutes: a.intervalMinutes, status: a.status, ...counts };
+function getUserById(id) {
+  const r = get('SELECT * FROM users WHERE id = ?', [id]);
+  return r ? mapUser(r) : null;
+}
+
+function getUserByEmail(email) {
+  const r = get('SELECT * FROM users WHERE email = ?', [email.toLowerCase().trim()]);
+  return r ? mapUser(r) : null;
+}
+
+function authenticateUser(email, password) {
+  const r = get('SELECT * FROM users WHERE email = ?', [email.toLowerCase().trim()]);
+  if (!r) return null;
+  if (!verifyPassword(password, r.password_hash)) return null;
+  if (r.status === 'suspended') return { error: 'suspended' };
+  // Update login count
+  run("UPDATE users SET login_count = login_count + 1, last_login = datetime('now') WHERE id = ?", [r.id]);
+  persist();
+  return mapUser(r);
+}
+
+function getAllUsers() {
+  return all('SELECT * FROM users ORDER BY created_at DESC').map(mapUser);
+}
+
+function updateUser(id, patch) {
+  const allowed = { name: 'name', email: 'email', phone: 'phone', bio: 'bio', role: 'role', plan: 'plan', status: 'status' };
+  const f = [], v = [];
+  for (const [k, col] of Object.entries(allowed)) {
+    if (patch[k] !== undefined) { f.push(col + ' = ?'); v.push(patch[k]); }
+  }
+  if (patch.password) {
+    f.push('password_hash = ?');
+    v.push(hashPassword(patch.password));
+  }
+  if (!f.length) return getUserById(id);
+  v.push(id);
+  run('UPDATE users SET ' + f.join(', ') + ' WHERE id = ?', v);
+  persist();
+  return getUserById(id);
+}
+
+function deleteUser(id) {
+  run('DELETE FROM sessions WHERE user_id = ?', [id]);
+  run('DELETE FROM users WHERE id = ?', [id]);
+  persist();
+}
+
+// Sessions
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 dias
+  run('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', [token, userId, expires]);
+  persist();
+  return token;
+}
+
+function getSession(token) {
+  if (!token) return null;
+  const r = get('SELECT * FROM sessions WHERE token = ? AND expires_at > datetime(?)', [token, new Date().toISOString()]);
+  if (!r) return null;
+  return { token: r.token, userId: r.user_id, expiresAt: r.expires_at };
+}
+
+function deleteSession(token) {
+  run('DELETE FROM sessions WHERE token = ?', [token]);
+  persist();
+}
+
+function cleanExpiredSessions() {
+  run("DELETE FROM sessions WHERE expires_at < datetime('now')");
+}
+
+// Activity Logs
+function logActivity(userId, email, action, detail) {
+  const { v4: uuid } = require('uuid');
+  run('INSERT INTO activity_logs (id, user_id, email, action, detail) VALUES (?, ?, ?, ?, ?)',
+    [uuid(), userId, email, action, detail || '']);
+  persist();
+}
+
+function getActivityLogs(limit = 200) {
+  return all('SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT ?', [limit]);
+}
+
+function mapUser(r) {
+  if (!r) return null;
+  return {
+    id: r.id, email: r.email, name: r.name, role: r.role, plan: r.plan,
+    status: r.status, phone: r.phone || '', bio: r.bio || '',
+    loginCount: r.login_count, lastLogin: r.last_login, createdAt: r.created_at
+  };
+}
+
+// ══ ORIGINAL FUNCTIONS ═══════════════════════════════════════════
+
+function getSetting(k) { const r=get('SELECT value FROM settings WHERE key=?',[k]); return r?r.value:null; }
+function setSetting(k,v) { run('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',[k,v]); persist(); }
+function getAllSettings() { const rows=all('SELECT key,value FROM settings'); const o={}; rows.forEach(r=>o[r.key]=r.value); return o; }
+
+function getAccounts(userId=null, isAdmin=false) {
+  if (isAdmin || !userId) return all('SELECT * FROM accounts ORDER BY added_at DESC').map(mapA);
+  return all('SELECT * FROM accounts WHERE user_id=? ORDER BY added_at DESC', [userId]).map(mapA);
+}
+function getAccountById(id) { return mapA(get('SELECT * FROM accounts WHERE id=?',[id])); }
+function getAccountByIdForUser(id, userId, isAdmin=false) {
+  if (isAdmin || !userId) return mapA(get('SELECT * FROM accounts WHERE id=?',[id]));
+  return mapA(get('SELECT * FROM accounts WHERE id=? AND user_id=?',[id, userId]));
+}
+function getAccountByIgId(igId) { return mapA(get('SELECT * FROM accounts WHERE ig_account_id=?',[igId])); }
+function insertAccount(a) {
+  run('INSERT INTO accounts(id,user_id,access_token,ig_account_id,username,label,account_type,posts_per_day,start_time,end_time,interval_minutes,interval_mode,status,total_posts,category_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [a.id,a.userId||null,a.accessToken,a.igAccountId,a.username,a.label,a.accountType||'BUSINESS',a.postsPerDay||40,a.startTime||'02:00',a.endTime||'23:00',a.intervalMinutes||31,a.intervalMode||'inteligente',a.status||'active',a.totalPosts||0,a.categoryId||null]);
+  persist(); return getAccountById(a.id);
+}
+function updateAccount(id, patch) {
+  const map={accessToken:'access_token',username:'username',label:'label',postsPerDay:'posts_per_day',startTime:'start_time',endTime:'end_time',intervalMinutes:'interval_minutes',intervalMode:'interval_mode',status:'status',totalPosts:'total_posts',categoryId:'category_id'};
+  const f=[],v=[];
+  for(const[k,col] of Object.entries(map)) if(patch[k]!==undefined){f.push(col+' = ?');v.push(patch[k]);}
+  if(!f.length) return getAccountById(id);
+  f.push("updated_at=datetime('now')"); v.push(id);
+  run('UPDATE accounts SET '+f.join(', ')+' WHERE id=?',v); persist(); return getAccountById(id);
+}
+function deleteAccount(id) { run('DELETE FROM videos WHERE account_id=?',[id]); run('DELETE FROM accounts WHERE id=?',[id]); persist(); }
+
+function getVideos({accountId,status,date,limit=300,offset=0,userId=null,isAdmin=false}={}) {
+  let sql='SELECT * FROM videos WHERE 1=1'; const p=[];
+  if(!isAdmin && userId){sql+=' AND user_id=?';p.push(userId);}
+  if(accountId&&accountId!=='all'){
+    if(Array.isArray(accountId)){
+      sql+=' AND account_id IN ('+accountId.map(()=>'?').join(',')+')';p.push(...accountId);
+    }else{sql+=' AND account_id=?';p.push(accountId);}
+  }
+  if(status&&status!=='todos'){sql+=' AND status=?';p.push(status);}
+  if(date){sql+=' AND DATE(scheduled_for)=?';p.push(date);}
+  sql+=' ORDER BY scheduled_for ASC LIMIT ? OFFSET ?'; p.push(limit,offset);
+  return all(sql,p).map(mapV);
+}
+function getVideoCounts(accountId, userId=null, isAdmin=false) {
+  let sql='SELECT status, COUNT(*) as cnt FROM videos WHERE 1=1'; const p=[];
+  if(!isAdmin && userId){sql+=' AND user_id=?';p.push(userId);}
+  if(accountId&&accountId!=='all'){sql+=' AND account_id=?';p.push(accountId);}
+  sql+=' GROUP BY status';
+  const rows=all(sql,p); const c={todos:0,pendente:0,processando:0,postado:0,erro:0,cancelado:0};
+  rows.forEach(r=>{c[r.status]=r.cnt;c.todos+=r.cnt;}); return c;
+}
+function getVideoById(id) { return mapV(get('SELECT * FROM videos WHERE id=?',[id])); }
+function getPendingVideos() { return all("SELECT * FROM videos WHERE status IN ('pendente','processando') ORDER BY scheduled_for ASC").map(mapV); }
+function insertVideo(v) {
+  run('INSERT INTO videos(id,user_id,account_id,username,original_name,batch_name,b2_url,b2_file_id,b2_file_name,bytes,duration,caption,hashtags,cycle,scheduled_for,status,retries) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [v.id,v.userId||null,v.accountId,v.username,v.originalName,v.batchName||v.originalName,v.b2Url||'',v.b2FileId||'',v.b2FileName||'',v.bytes||0,v.duration||0,v.caption||'',v.hashtags||'',v.cycle||1,v.scheduledFor,v.status||'pendente',0]);
+  persist(); return getVideoById(v.id);
+}
+function updateVideo(id, patch) {
+  const map={status:'status',igPostId:'ig_post_id',postedAt:'posted_at',errorMsg:'error_msg',retries:'retries',scheduledFor:'scheduled_for',b2Url:'b2_url'};
+  const f=[],v=[];
+  for(const[k,col] of Object.entries(map)) if(patch[k]!==undefined){f.push(col+' = ?');v.push(patch[k]);}
+  if(!f.length) return getVideoById(id);
+  f.push("updated_at=datetime('now')"); v.push(id);
+  run('UPDATE videos SET '+f.join(', ')+' WHERE id=?',v); persist(); return getVideoById(id);
+}
+function deleteVideo(id) { run('DELETE FROM videos WHERE id=?',[id]); persist(); }
+function cancelPendingVideos(accountId, userId=null, isAdmin=false) {
+  if(accountId&&accountId!=='all'){
+    if(!isAdmin && userId) run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE account_id=? AND user_id=? AND status='pendente'",[accountId, userId]);
+    else run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE account_id=? AND status='pendente'",[accountId]);
+  } else {
+    if(!isAdmin && userId) run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE user_id=? AND status='pendente'",[userId]);
+    else run("UPDATE videos SET status='cancelado',updated_at=datetime('now') WHERE status='pendente'");
+  }
+  persist();
+}
+function getStats(userId=null, isAdmin=false) {
+  let videoSql = "SELECT status, COUNT(*) as cnt FROM videos";
+  let accountSql = "SELECT COUNT(*) as cnt FROM accounts";
+  const p = [];
+  if(!isAdmin && userId){ videoSql += " WHERE user_id=?"; accountSql += " WHERE user_id=?"; p.push(userId); }
+  videoSql += " GROUP BY status";
+  const rows=all(videoSql, p);
+  const s={total:0,pendente:0,processando:0,postado:0,erro:0,cancelado:0};
+  rows.forEach(r=>{s[r.status]=r.cnt;s.total+=r.cnt;});
+  s.accounts=(get(accountSql, p)||{cnt:0}).cnt; return s;
+}
+
+function mapA(r) { if(!r)return null; return{id:r.id,userId:r.user_id,accessToken:r.access_token,igAccountId:r.ig_account_id,username:r.username,label:r.label,accountType:r.account_type,postsPerDay:r.posts_per_day,startTime:r.start_time,endTime:r.end_time,intervalMinutes:r.interval_minutes,intervalMode:r.interval_mode,status:r.status,totalPosts:r.total_posts,categoryId:r.category_id,addedAt:r.added_at,updatedAt:r.updated_at}; }
+function mapV(r) { if(!r)return null; return{id:r.id,accountId:r.account_id,username:r.username,originalName:r.original_name,batchName:r.batch_name,b2Url:r.b2_url,cloudinaryUrl:r.b2_url,b2FileId:r.b2_file_id,b2FileName:r.b2_file_name,bytes:r.bytes,duration:r.duration,caption:r.caption,hashtags:r.hashtags,cycle:r.cycle,scheduledFor:r.scheduled_for,status:r.status,igPostId:r.ig_post_id,postedAt:r.posted_at,errorMsg:r.error_msg,retries:r.retries,createdAt:r.created_at,updatedAt:r.updated_at}; }
+
+
+// ── Dashboard helpers (queries únicas, sem N+1) ──────────────────
+function getVideoCountsPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, status, COUNT(*) as cnt FROM videos WHERE 1=1";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id, status";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => {
+    if (!map[r.account_id]) map[r.account_id] = { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 };
+    map[r.account_id][r.status] = r.cnt;
+    map[r.account_id].todos += r.cnt;
   });
-  res.json(result);
-});
+  return map;
+}
 
-// ══ PRESET CAPTIONS ═══════════════════════════════════════════════
-router.get('/captions', (req, res) => {
-  const raw = db.getSetting('presetCaptions_' + userId(req));
-  res.json(raw ? JSON.parse(raw) : []);
-});
+function getNextScheduledPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, MIN(scheduled_for) as next FROM videos WHERE status='pendente'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => { map[r.account_id] = r.next; });
+  return map;
+}
 
-router.post('/captions', (req, res) => {
-  const { captions } = req.body; // array de {id, name, caption, hashtags}
-  if (!Array.isArray(captions)) return res.status(400).json({ error: 'captions deve ser array' });
-  db.setSetting('presetCaptions_' + userId(req), JSON.stringify(captions));
-  res.json({ success: true });
-});
+function getLastPostedPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, MAX(posted_at) as last FROM videos WHERE status='postado'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => { map[r.account_id] = r.last; });
+  return map;
+}
 
-router.get('/stats', (req, res) => {
-  const stats = db.getStats(userId(req), isAdmin(req));
-  stats.activeJobs = ig.getActiveJobCount();
-  res.json(stats);
-});
+function getLastPendingPerAccount(userId=null, isAdmin=false) {
+  let sql = "SELECT account_id, MAX(scheduled_for) as last FROM videos WHERE status='pendente'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(r => { map[r.account_id] = r.last; });
+  return map;
+}
 
-// Stats por conta (para cards do dashboard)
-router.get('/stats/by-account', (req, res) => {
-  const accounts = db.getAccounts(userId(req), isAdmin(req));
-  const result = accounts.map(a => {
-    const counts = db.getVideoCounts(a.id, userId(req), isAdmin(req));
-    return {
-      id: a.id,
-      username: a.username,
-      label: a.label,
-      postsPerDay: a.postsPerDay,
-      startTime: a.startTime,
-      endTime: a.endTime,
-      intervalMinutes: a.intervalMinutes,
-      status: a.status,
-      counts,
-    };
+function getDailySchedulePerAccount(userId, isAdmin, offsetHours) {
+  if (offsetHours === undefined) offsetHours = -3;
+  const sign = offsetHours >= 0 ? '+' : '-';
+  const absH = Math.abs(offsetHours);
+  const offsetExpr = "datetime(scheduled_for, '" + sign + absH + " hours')";
+  const dateExpr = "DATE(" + offsetExpr + ")";
+  let sql = "SELECT account_id, " + dateExpr + " as day, COUNT(*) as cnt FROM videos WHERE status='pendente'";
+  const p = [];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  sql += " GROUP BY account_id, " + dateExpr + " ORDER BY day ASC";
+  const rows = all(sql, p);
+  const map = {};
+  rows.forEach(function(r) {
+    if (!map[r.account_id]) map[r.account_id] = {};
+    map[r.account_id][r.day] = r.cnt;
   });
-  res.json(result);
-});
+  return map;
+}
 
+function getPostedTodayCount(userId=null, isAdmin=false, today) {
+  let sql = "SELECT COUNT(*) as cnt FROM videos WHERE status='postado' AND DATE(posted_at)=?";
+  const p = [today];
+  if (!isAdmin && userId) { sql += " AND user_id=?"; p.push(userId); }
+  return (get(sql, p) || { cnt: 0 }).cnt;
+}
 
-// ══ DASHBOARD — tudo em 1 request ══════════════════════════════
-router.get('/dashboard', (req, res) => {
-  const uid = userId(req);
-  const adm = isAdmin(req);
+// ── CATEGORIAS DE CONTAS ──
+function getCategories(userId=null, isAdmin=false) {
+  if (isAdmin) return all('SELECT * FROM account_categories ORDER BY name ASC', []);
+  return all('SELECT * FROM account_categories WHERE user_id=? OR user_id IS NULL ORDER BY name ASC', [userId]);
+}
+function getCategoryById(id) { return get('SELECT * FROM account_categories WHERE id=?', [id]); }
+function insertCategory(cat) {
+  run('INSERT INTO account_categories(id,user_id,name,color) VALUES(?,?,?,?)',
+    [cat.id, cat.userId||null, cat.name, cat.color||'#6c63ff']);
+  return getCategoryById(cat.id);
+}
+function updateCategory(id, patch) {
+  const fields = [], p = [];
+  if (patch.name !== undefined) { fields.push('name=?'); p.push(patch.name); }
+  if (patch.color !== undefined) { fields.push('color=?'); p.push(patch.color); }
+  if (!fields.length) return;
+  p.push(id);
+  run('UPDATE account_categories SET ' + fields.join(',') + ' WHERE id=?', p);
+}
+function deleteCategory(id) {
+  run('UPDATE accounts SET category_id=NULL WHERE category_id=?', [id]);
+  run('DELETE FROM account_categories WHERE id=?', [id]);
+}
 
-  // Stats gerais
-  const stats = db.getStats(uid, adm);
-  stats.activeJobs = ig.getActiveJobCount();
-
-  // Contas com counts + próximo + último por conta
-  const accounts = db.getAccounts(uid, adm);
-
-  // Uma query só: counts por conta e status
-  const counts = db.getVideoCountsPerAccount(uid, adm);
-  // Uma query só: próximo pendente por conta
-  const nextMap = db.getNextScheduledPerAccount(uid, adm);
-  // Uma query só: último postado por conta
-  const lastMap = db.getLastPostedPerAccount(uid, adm);
-  // Uma query só: último pendente por conta (data do último vídeo na fila)
-  const lastPendMap = db.getLastPendingPerAccount(uid, adm);
-  // Agendamentos por dia por conta
-  const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
-  const dailyMap = db.getDailySchedulePerAccount(uid, adm, offsetHours);
-  // Próximos 8 pendentes para lista
-  const upcoming = db.getVideos({ status: 'pendente', limit: 8, userId: uid, isAdmin: adm });
-  // Postados hoje
-  const today = new Date().toISOString().split('T')[0];
-  const todayCount = db.getPostedTodayCount(uid, adm, today);
-
-  const accStats = accounts.map(a => ({
-    id: a.id,
-    username: a.username,
-    label: a.label,
-    postsPerDay: a.postsPerDay,
-    startTime: a.startTime,
-    endTime: a.endTime,
-    intervalMinutes: a.intervalMinutes,
-    status: a.status,
-    counts: counts[a.id] || { todos: 0, pendente: 0, postado: 0, erro: 0, processando: 0, cancelado: 0 },
-    nextScheduled: nextMap[a.id] || null,
-    lastPosted: lastMap[a.id] || null,
-    lastPending: lastPendMap[a.id] || null,
-    dailySchedule: dailyMap[a.id] || {},
-  }));
-
-  res.json({ stats, accStats, upcoming, todayCount });
-});
-
-router.get('/export/csv', (req, res) => {
-  const { accountId } = req.query;
-  const videos = db.getVideos({ accountId, limit: 99999, userId: userId(req), isAdmin: isAdmin(req) });
-  const header = ['Arquivo','Conta','Status','Agendado','Publicado','Post ID','Erro','Ciclo'];
-  const rows = videos.map(v => [v.originalName, v.username, v.status, v.scheduledFor||'', v.postedAt||'', v.igPostId||'', v.errorMsg||'', v.cycle||1]);
-  const csv = [header,...rows].map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
-  res.setHeader('Content-Type','text/csv;charset=utf-8');
-  res.setHeader('Content-Disposition','attachment;filename="cuttools_export.csv"');
-  res.send('\uFEFF'+csv);
-});
-
-
-module.exports = router;
+module.exports = {
+  init, persist,
+  // Auth (NOVO)
+  hashPassword, verifyPassword, createUser, getUserById, getUserByEmail, authenticateUser,
+  getAllUsers, updateUser, deleteUser,
+  createSession, getSession, deleteSession, cleanExpiredSessions,
+  logActivity, getActivityLogs,
+  // Original
+  getSetting, setSetting, getAllSettings,
+  getAccounts, getAccountById, getAccountByIgId, getAccountByIdForUser, insertAccount, updateAccount, deleteAccount,
+  getVideos, getVideoCounts, getVideoById, getPendingVideos, insertVideo, updateVideo, deleteVideo, cancelPendingVideos, getStats,
+  getCategories, getCategoryById, insertCategory, updateCategory, deleteCategory,
+  getVideoCountsPerAccount, getNextScheduledPerAccount, getLastPostedPerAccount, getLastPendingPerAccount, getDailySchedulePerAccount, getPostedTodayCount
+};
