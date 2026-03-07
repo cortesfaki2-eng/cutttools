@@ -456,75 +456,75 @@ function calcInterval(postsPerDay, startH, startM, endH, endM) {
 
 // Gera datas de agendamento distribuídas uniformemente na janela diária
 // Usa offsetHours para converter horário local (padrão BRT -3) para UTC
-function generateSchedule(total, postsPerDay, _intervalIgnored, startH, startM, endH=23, endM=0, lastScheduled=null, offsetHours=-3) {
-  // Recalcular intervalo dinamicamente — ignora intervalMinutes salvo no DB
+function generateSchedule(total, postsPerDay, _ignored, startH, startM, endH=23, endM=0, lastScheduled=null, offsetHours=-3) {
   const intervalMinutes = calcInterval(postsPerDay, startH, startM, endH, endM);
-  if (!intervalMinutes) return []; // janela inválida
+  if (!intervalMinutes) return [];
 
   const dates = [];
   const now = new Date();
-  const startUTC = startH - offsetHours; // BRT→UTC: 02h - (-3) = 05h UTC
+  const startUTC = startH - offsetHours; // ex: 02h BRT (-3) → 05h UTC
   const windowMins = (endH * 60 + endM) - (startH * 60 + startM);
 
-  // Ponto de partida
-  let current;
+  // Início da janela do dia de uma data — sempre <= date
+  function windowStartOf(date) {
+    const d = new Date(date);
+    d.setUTCHours(startUTC, startM, 0, 0);
+    if (d > date) d.setUTCDate(d.getUTCDate() - 1);
+    return d;
+  }
+
+  let current, slotInDay, dayWS;
+
+  function goToNextDay() {
+    slotInDay = 0;
+    dayWS = new Date(dayWS);
+    dayWS.setUTCDate(dayWS.getUTCDate() + 1);
+    current = new Date(dayWS);
+  }
+
   if (lastScheduled && lastScheduled > now) {
-    current = new Date(lastScheduled.getTime() + intervalMinutes * 60000);
-  } else {
-    // Início = agora ou próximo startH do dia
-    const todayStart = new Date(now);
-    todayStart.setUTCHours(startUTC, startM, 0, 0);
-    const todayEnd = new Date(todayStart.getTime() + windowMins * 60000);
-    const candidate = new Date(now.getTime() + 60000); // 1 min a partir de agora
-    if (candidate < todayStart) {
-      current = todayStart;
-    } else if (candidate <= todayEnd) {
-      // Encaixar no próximo slot disponível dentro do dia
-      const elapsed = Math.ceil((candidate - todayStart) / (intervalMinutes * 60000));
-      current = new Date(todayStart.getTime() + elapsed * intervalMinutes * 60000);
-      if (current > todayEnd) {
-        // Passou da janela hoje — começar amanhã
-        const d = new Date(todayStart); d.setUTCDate(d.getUTCDate() + 1);
-        current = d;
-      }
+    dayWS = windowStartOf(lastScheduled);
+    const off = (lastScheduled - dayWS) / 60000;
+    const slotIndex = Math.round(off / intervalMinutes);
+    const next = new Date(dayWS.getTime() + (slotIndex + 1) * intervalMinutes * 60000);
+    const nextOff = (next - dayWS) / 60000;
+    if (nextOff > windowMins) {
+      dayWS.setUTCDate(dayWS.getUTCDate() + 1);
+      current = new Date(dayWS);
+      slotInDay = 0;
     } else {
-      // Já passou do endTime hoje — começar amanhã
-      const d = new Date(todayStart); d.setUTCDate(d.getUTCDate() + 1);
-      current = d;
+      current = next;
+      slotInDay = slotIndex + 1;
+    }
+  } else {
+    dayWS = windowStartOf(now);
+    const dayEnd = new Date(dayWS.getTime() + windowMins * 60000);
+    const candidate = new Date(now.getTime() + 60000);
+
+    if (candidate <= dayWS) {
+      current = new Date(dayWS); slotInDay = 0;
+    } else if (candidate <= dayEnd) {
+      const elapsed = Math.ceil((candidate - dayWS) / (intervalMinutes * 60000));
+      const snapped = new Date(dayWS.getTime() + elapsed * intervalMinutes * 60000);
+      if (snapped <= dayEnd) { current = snapped; slotInDay = elapsed; }
+      else { goToNextDay(); }
+    } else {
+      goToNextDay();
     }
   }
 
-  let slotInDay = 0;
   for (let i = 0; i < total; i++) {
-    // Verificar se current ainda está dentro da janela do dia
-    const dayStart = new Date(current);
-    dayStart.setUTCHours(startUTC, startM, 0, 0);
-    const slotOffset = (current - dayStart) / 60000; // minutos desde início da janela
-    if (slotOffset < 0 || slotOffset > windowMins + 1) {
-      // Fora da janela — forçar para início do dia
-      current = new Date(dayStart);
-      slotInDay = 0;
-    }
-
     dates.push(new Date(current));
     slotInDay++;
 
     if (slotInDay >= postsPerDay) {
-      // Dia completo — próximo dia
-      slotInDay = 0;
-      const d = new Date(current); d.setUTCDate(d.getUTCDate() + 1);
-      d.setUTCHours(startUTC, startM, 0, 0);
-      current = d;
+      goToNextDay();
     } else {
-      const next = new Date(current.getTime() + intervalMinutes * 60000);
-      const nextDayStart = new Date(next); nextDayStart.setUTCHours(startUTC, startM, 0, 0);
-      const nextOffset = (next - nextDayStart) / 60000;
-      if (nextOffset > windowMins) {
-        // Próximo slot passa do endTime — avançar para amanhã
-        slotInDay = 0;
-        const d = new Date(current); d.setUTCDate(d.getUTCDate() + 1);
-        d.setUTCHours(startUTC, startM, 0, 0);
-        current = d;
+      // Offset calculado a partir do dayWS fixo deste dia — nunca muda até goToNextDay
+      const next = new Date(dayWS.getTime() + slotInDay * intervalMinutes * 60000);
+      const off = (next - dayWS) / 60000;
+      if (off > windowMins) {
+        goToNextDay();
       } else {
         current = next;
       }
