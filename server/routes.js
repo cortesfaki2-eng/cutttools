@@ -639,7 +639,8 @@ router.get('/dashboard', (req, res) => {
   // Uma query só: último pendente por conta (data do último vídeo na fila)
   const lastPendMap = db.getLastPendingPerAccount(uid, adm);
   // Agendamentos por dia por conta
-  const dailyMap = db.getDailySchedulePerAccount(uid, adm);
+  const offsetHours = parseInt(db.getAllSettings().timezoneOffset || '-3');
+  const dailyMap = db.getDailySchedulePerAccount(uid, adm, offsetHours);
   // Próximos 8 pendentes para lista
   const upcoming = db.getVideos({ status: 'pendente', limit: 8, userId: uid, isAdmin: adm });
   // Postados hoje
