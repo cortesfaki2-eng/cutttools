@@ -430,7 +430,20 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
       <div class="card"><div class="card-title">Próximas postagens</div><div id="dashNextList"></div></div>
     </div>
     <!-- ACCOUNTS --><div class="panel" id="panel-accounts">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-p btn-sm" onclick="openModal('modalAddAcc')">➕ Adicionar conta</button></div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <div class="card" style="flex:1;min-width:260px;margin:0">
+          <div class="card-title" style="margin-bottom:8px">🏷️ Categorias</div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <input id="cat-name-input" placeholder="Nova categoria..." style="flex:1;font-size:12px">
+            <input type="color" id="cat-color-input" value="#6c63ff" style="width:34px;height:34px;padding:2px;border-radius:6px;border:1px solid var(--b2);background:var(--b1);cursor:pointer;flex-shrink:0">
+            <button class="btn btn-p btn-sm" onclick="createCategory()">➕</button>
+          </div>
+          <div class="cat-list" id="catList"></div>
+        </div>
+        <div style="display:flex;align-items:flex-start;padding-top:4px">
+          <button class="btn btn-p btn-sm" onclick="openModal('modalAddAcc')">➕ Adicionar conta</button>
+        </div>
+      </div>
       <div class="acc-grid" id="accGrid"><div class="empty" style="grid-column:1/-1"><div class="empty-icon">📱</div><p>Nenhuma conta</p></div></div>
     </div>
     <!-- VIDEOS --><div class="panel" id="panel-videos">
@@ -465,15 +478,7 @@ textarea{resize:vertical;min-height:60px;line-height:1.5}
         <div class="field"><label>URL Pública</label><input id="b2-pub"><div class="hint">Formato: https://pub-xxx.r2.dev</div></div>
         <button class="btn btn-p btn-sm" onclick="saveSettings()">💾 Salvar</button>
       </div>
-      <div class="card" style="max-width:620px;margin-top:16px">
-        <div class="card-title">🏷️ Categorias de Contas</div>
-        <div style="display:flex;gap:8px;margin-bottom:6px">
-          <input id="cat-name-input" placeholder="Nome da categoria" style="flex:1">
-          <input type="color" id="cat-color-input" value="#6c63ff" style="width:40px;height:36px;padding:2px;border-radius:6px;border:1px solid var(--b2);background:var(--b1);cursor:pointer">
-          <button class="btn btn-p btn-sm" onclick="createCategory()">➕ Criar</button>
-        </div>
-        <div class="cat-list" id="catList"></div>
-      </div>
+
     </div>
     <!-- ADMIN: USERS --><div class="panel" id="panel-admin-users">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
