@@ -843,7 +843,7 @@ async function runUploadPresign(qid,files,params,acc){
     }
   }
 
-  async function uploadOne(f,idx){
+  async function uploadOne(f,idx,retried=false){
     if(cancelled||ctrl.signal.aborted)return null;
     activeMap.set(idx,{name:f.name,pct:0});
     refreshProgress();
@@ -873,8 +873,11 @@ async function runUploadPresign(qid,files,params,acc){
         };
         xhr.onload=()=>{
           ctrl.signal.removeEventListener('abort',onAbort);
-          if(xhr.status>=400)rej(new Error('R2 '+xhr.status+': '+xhr.responseText.slice(0,120)));
-          else res();
+          if(xhr.status>=400){
+            // Log detalhado para debug
+            console.error('[R2 Error]',xhr.status,xhr.responseText.slice(0,300));
+            rej(new Error('R2 '+xhr.status+(xhr.status===403?' (assinatura inválida - tente novamente)':xhr.status===400?' (requisição inválida)':'')));
+          } else res();
         };
         xhr.onerror=()=>{ctrl.signal.removeEventListener('abort',onAbort);rej(new Error('Erro de rede'));};
         xhr.onabort=()=>{ctrl.signal.removeEventListener('abort',onAbort);rej(new Error('cancelado'));};
@@ -890,11 +893,18 @@ async function runUploadPresign(qid,files,params,acc){
       return {idx,originalName:f.name,key:presign.key,publicFileUrl:presign.publicFileUrl||presign.fileUrl,bytes:f.size};
     }catch(e){
       if(e.message==='cancelado'){cancelled=true;return null;}
+      // 1 retry automático em erro de rede
+      if(!e.message.startsWith('R2 403')&&!retried){
+        retried=true;
+        console.warn('[Upload] Retry:',f.name,e.message);
+        await new Promise(r=>setTimeout(r,1500));
+        return uploadOne(f,idx,true);
+      }
       bytesPerFile[idx]=0;
       activeMap.delete(idx);
       errs++;
       const q=uploadQueue.find(q=>q.id===qid);if(q)q.errs=(q.errs||0)+1;
-      console.warn('[Upload]',f.name,e.message);
+      console.warn('[Upload] Falhou:',f.name,e.message);
       refreshProgress();
       return null;
     }
