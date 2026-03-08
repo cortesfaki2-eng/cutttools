@@ -628,6 +628,14 @@ async function doSignup() {
 function doLogout() {
   if (authToken) fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + authToken } }).catch(() => {});
   authToken = ''; localStorage.removeItem('ct_token'); currentUser = null;
+  // Limpar todo estado da sessão
+  accounts = [];
+  categories = [];
+  uploadQueue = [];
+  uploadAbortMap.clear();
+  document.getElementById('sbAccountList').innerHTML = '';
+  document.getElementById('sbQueue').style.display = 'none';
+  document.getElementById('queueList').innerHTML = '';
   document.getElementById('authScreen').classList.remove('hidden');
   document.getElementById('appWrap').classList.remove('show');
 }
@@ -1423,7 +1431,10 @@ function copyVideoUrl(url, btn) {
 }
 
 async function appInit(){
-  accounts=[];updateSbAccounts();
+  // Resetar estado ao entrar — evita vazar dados de sessão anterior
+  accounts=[];categories=[];uploadQueue=[];
+  updateSbAccounts();
+  renderQueue();
   const data=await api('/api/accounts');accounts=data;updateSbAccounts();
   await loadCategories();
   await loadCaptionPresets();
