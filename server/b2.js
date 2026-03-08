@@ -121,11 +121,10 @@ async function getPresignedUploadUrl(key, contentType) {
     Key: key,
     ContentType: ct,
   });
-  // signableHeaders força o Content-Type a ser parte da assinatura
-  // → R2 valida e armazena com o tipo correto
+  // Sem signableHeaders — não força Content-Type na assinatura
+  // Assim o cliente pode enviar qualquer content-type sem invalidar a URL
   const uploadUrl = await getSignedUrl(client, command, {
     expiresIn: 3600,
-    signableHeaders: new Set(['content-type']),
   });
   const fileUrl = publicUrl ? publicUrl.replace(/\/$/, '') + '/' + key : uploadUrl.split('?')[0];
   return { uploadUrl, fileUrl, contentType: ct };
