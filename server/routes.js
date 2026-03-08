@@ -140,8 +140,9 @@ router.get('/videos/presign', async (req, res) => {
     const ext = path.extname(filename);
     const base = path.basename(filename, ext).replace(/[^a-zA-Z0-9._-]/g, '_');
     const key = account.username + '/' + Date.now() + '_' + base + ext;
-    const { uploadUrl, fileUrl } = await b2.getPresignedUploadUrl(key, contentType || 'video/mp4');
-    res.json({ uploadUrl, publicFileUrl: fileUrl, key });
+    const ct = contentType || 'video/mp4';
+    const { uploadUrl, fileUrl } = await b2.getPresignedUploadUrl(key, ct);
+    res.json({ uploadUrl, publicFileUrl: fileUrl, key, contentType: ct });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
