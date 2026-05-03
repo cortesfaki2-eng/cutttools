@@ -1,6 +1,12 @@
 const axios = require('axios');
 const schedule = require('node-schedule');
 const db = require('./db');
+const videoLib = require('./video');
+const b2 = require('./b2');
+
+async function ensureVideoFaststart(url, key) {
+  return videoLib.ensureFaststart(b2, url, key);
+}
 
 const BASE = 'https://graph.facebook.com/v19.0';
 const IG_BASE = 'https://graph.instagram.com';
@@ -190,6 +196,18 @@ async function executePost(videoId) {
 
   let igPostId = null;
   try {
+    // CRÍTICO: garantir faststart antes de mandar pro IG. Vídeos sem moov atom
+    // no início falham com erro genérico "could not be fetched from the URL".
+    if (!video.faststartChecked) {
+      onProgress('faststart', 2, 'Otimizando MP4 (faststart)...');
+      try {
+        const result = await ensureVideoFaststart(video.b2Url, video.b2FileName);
+        db.updateVideo(videoId, { faststartChecked: 1 });
+        if (result.changed) console.log('[Faststart] ' + video.originalName + ' corrigido (' + result.bytes + ' bytes)');
+      } catch (e) {
+        console.warn('[Faststart] falhou em ' + video.originalName + ': ' + e.message + ' — tentando publicar mesmo assim');
+      }
+    }
     const caption = [video.caption, video.hashtags ? video.hashtags.split(/\s+/).map(h => h.startsWith('#') ? h : '#'+h).join(' ') : ''].filter(Boolean).join('\n\n');
     igPostId = await publishVideo(account.accessToken, account.igAccountId, video.b2Url, caption, onProgress);
   } catch(err) {

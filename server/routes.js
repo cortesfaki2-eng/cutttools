@@ -7,6 +7,7 @@ const { v4: uuid } = require('uuid');
 const db = require('./db');
 const ig = require('./instagram');
 const b2 = require('./b2');
+const videoLib = require('./video');
 
 const router = express.Router();
 // diskStorage — evita estourar RAM no servidor (vídeos são grandes)
@@ -39,7 +40,11 @@ function getLastScheduledTime(accountId) {
 function configureB2FromDB() {
   const s = db.getAllSettings();
   if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
-    b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+    try {
+      b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+    } catch (e) {
+      console.warn('[B2] configure falhou:', e.message);
+    }
   }
 }
 
@@ -536,6 +541,150 @@ function generateSchedule(total, postsPerDay, _ignored, startH, startM, endH=23,
   }
   return dates;
 }
+
+// ── ADMIN: corrigir faststart de vídeos com erro ─────────────────
+// Baixa vídeo do R2, roda ffmpeg -movflags +faststart, re-upload na mesma key.
+// Aciona em background — resposta retorna imediato com job id e status segue
+// pelos updates de errorMsg em cada vídeo.
+const faststartJobs = new Map(); // jobId → { total, done, errors, startedAt }
+
+router.post('/admin/fix-faststart', adminMiddleware, (req, res) => {
+  const { accountId, videoIds, all } = req.body || {};
+  let videos;
+  if (Array.isArray(videoIds) && videoIds.length) {
+    videos = videoIds.map(id => db.getVideoById(id)).filter(Boolean);
+  } else if (all === true || all === 'true') {
+    videos = db.allRaw("SELECT * FROM videos WHERE faststart_checked = 0 AND status IN ('erro','pendente')").map(r => ({
+      id: r.id, b2Url: r.b2_url, b2FileName: r.b2_file_name, originalName: r.original_name, status: r.status,
+    }));
+  } else if (accountId) {
+    videos = db.allRaw("SELECT * FROM videos WHERE account_id=? AND faststart_checked=0 AND status IN ('erro','pendente')", [accountId]).map(r => ({
+      id: r.id, b2Url: r.b2_url, b2FileName: r.b2_file_name, originalName: r.original_name, status: r.status,
+    }));
+  } else {
+    return res.status(400).json({ error: 'forneça accountId, videoIds[] ou all=true' });
+  }
+
+  if (!videos.length) return res.json({ success: true, total: 0, message: 'Nenhum vídeo precisa de faststart' });
+
+  const jobId = require('uuid').v4();
+  const job = { total: videos.length, done: 0, fixed: 0, skipped: 0, errors: [], startedAt: Date.now() };
+  faststartJobs.set(jobId, job);
+
+  // Processa em background com concorrência limitada
+  (async () => {
+    const CONCURRENCY = 2; // não estourar CPU/banda do servidor
+    const queue = [...videos];
+    const workers = [];
+    for (let w = 0; w < CONCURRENCY; w++) {
+      workers.push((async () => {
+        while (queue.length) {
+          const v = queue.shift();
+          try {
+            const result = await videoLib.ensureFaststart(b2, v.b2Url, v.b2FileName);
+            if (result.changed) job.fixed++;
+            else job.skipped++;
+            db.updateVideo(v.id, { faststartChecked: 1 });
+            // Se estava com erro, reagendar pra agora
+            if (v.status === 'erro') {
+              db.updateVideo(v.id, { status: 'pendente', errorMsg: null, retries: 0, scheduledFor: new Date().toISOString() });
+              ig.scheduleVideo(v.id);
+            }
+            console.log(`[Faststart Job ${jobId}] ${job.done + 1}/${job.total} ${v.originalName} ${result.changed ? '✓ fixed' : '⊘ skip'}`);
+          } catch (e) {
+            job.errors.push({ id: v.id, name: v.originalName, error: e.message });
+            console.error(`[Faststart Job ${jobId}] ❌ ${v.originalName}: ${e.message}`);
+          }
+          job.done++;
+        }
+      })());
+    }
+    await Promise.all(workers);
+    job.finishedAt = Date.now();
+    console.log(`[Faststart Job ${jobId}] done. fixed=${job.fixed} skipped=${job.skipped} errors=${job.errors.length}`);
+  })().catch(e => { job.fatalError = e.message; });
+
+  res.json({ success: true, jobId, total: videos.length });
+});
+
+router.get('/admin/fix-faststart/:jobId', adminMiddleware, (req, res) => {
+  const job = faststartJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'job não encontrado (limpa após o servidor reiniciar)' });
+  res.json({
+    total: job.total,
+    done: job.done,
+    fixed: job.fixed,
+    skipped: job.skipped,
+    errors: job.errors,
+    finished: !!job.finishedAt,
+    durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+  });
+});
+
+// ── ADMIN: diagnóstico de URL pública ─────────────────────────────
+// Testa se a URL gerada pelo storage é realmente acessível sem auth
+// (que é o que o Instagram precisa pra baixar o vídeo).
+router.get('/admin/check-b2-url', adminMiddleware, async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url obrigatorio (query)' });
+  const axios = require('axios');
+  try {
+    const r = await axios.head(url, { timeout: 10000, validateStatus: () => true });
+    const ct = r.headers['content-type'] || '';
+    const cl = r.headers['content-length'] || '';
+    const ok = r.status >= 200 && r.status < 300;
+    res.json({
+      ok,
+      status: r.status,
+      contentType: ct,
+      contentLength: cl,
+      hint: ok
+        ? 'URL acessível publicamente. Se IG ainda recusa, verifique Content-Type (deve ser video/mp4) e tamanho.'
+        : (r.status === 401 || r.status === 403)
+          ? 'AccessDenied — bucket NÃO está público. Habilite acesso público (R2.dev subdomain ou B2 Public Bucket) e configure b2PublicUrl em Configurações.'
+          : r.status === 404 ? 'Arquivo não existe nesse path.' : `HTTP ${r.status} — verifique URL.`,
+    });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, hint: 'Falha ao conectar — URL inválida, host inexistente ou bloqueado por firewall.' });
+  }
+});
+
+// ── ADMIN: migração das b2_url existentes ─────────────────────────
+// Substitui um prefixo nas URLs já salvas (ex: trocar endpoint S3 privado
+// por r2.dev público). Reseta vídeos com erro de download pra "pendente"
+// para serem re-tentados com a URL nova.
+router.post('/admin/fix-b2-urls', adminMiddleware, (req, res) => {
+  const { oldPrefix, newPrefix, retryErrors } = req.body || {};
+  if (!oldPrefix || !newPrefix) {
+    return res.status(400).json({ error: 'oldPrefix e newPrefix obrigatórios' });
+  }
+  if (!/^https?:\/\//.test(newPrefix)) {
+    return res.status(400).json({ error: 'newPrefix precisa começar com http(s)://' });
+  }
+
+  const matches = db.allRaw('SELECT COUNT(*) AS n FROM videos WHERE b2_url LIKE ?', [oldPrefix + '%']);
+  const total = matches[0]?.n || 0;
+  if (!total) return res.json({ success: true, updated: 0, retried: 0, message: 'Nenhuma URL com esse prefixo encontrada.' });
+
+  // Troca prefixo (sql.js não tem REPLACE prefix-only, mas como já filtramos por LIKE oldPrefix%, REPLACE é seguro)
+  db.runRaw(
+    "UPDATE videos SET b2_url = ? || SUBSTR(b2_url, LENGTH(?) + 1), updated_at=datetime('now') WHERE b2_url LIKE ?",
+    [newPrefix.replace(/\/$/, ''), oldPrefix.replace(/\/$/, ''), oldPrefix + '%']
+  );
+
+  let retried = 0;
+  if (retryErrors) {
+    const errors = db.allRaw("SELECT id FROM videos WHERE status='erro' AND b2_url LIKE ?", [newPrefix.replace(/\/$/, '') + '%']);
+    errors.forEach(r => {
+      db.updateVideo(r.id, { status: 'pendente', errorMsg: null, retries: 0, scheduledFor: new Date().toISOString() });
+      ig.scheduleVideo(r.id);
+      retried++;
+    });
+  }
+  db.persist();
+  console.log(`[Admin] fix-b2-urls: ${total} URLs trocadas (${oldPrefix} → ${newPrefix}), ${retried} videos com erro re-agendados.`);
+  res.json({ success: true, updated: total, retried });
+});
 
 router.delete('/videos/:id', async (req, res) => {
   const v = db.getVideoById(req.params.id);
