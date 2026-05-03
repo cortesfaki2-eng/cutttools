@@ -7,6 +7,7 @@ const { v4: uuid } = require('uuid');
 const db = require('./db');
 const ig = require('./instagram');
 const b2 = require('./b2');
+const videoLib = require('./video');
 
 const router = express.Router();
 // diskStorage — evita estourar RAM no servidor (vídeos são grandes)
@@ -540,6 +541,85 @@ function generateSchedule(total, postsPerDay, _ignored, startH, startM, endH=23,
   }
   return dates;
 }
+
+// ── ADMIN: corrigir faststart de vídeos com erro ─────────────────
+// Baixa vídeo do R2, roda ffmpeg -movflags +faststart, re-upload na mesma key.
+// Aciona em background — resposta retorna imediato com job id e status segue
+// pelos updates de errorMsg em cada vídeo.
+const faststartJobs = new Map(); // jobId → { total, done, errors, startedAt }
+
+router.post('/admin/fix-faststart', adminMiddleware, (req, res) => {
+  const { accountId, videoIds, all } = req.body || {};
+  let videos;
+  if (Array.isArray(videoIds) && videoIds.length) {
+    videos = videoIds.map(id => db.getVideoById(id)).filter(Boolean);
+  } else if (all === true || all === 'true') {
+    videos = db.allRaw("SELECT * FROM videos WHERE faststart_checked = 0 AND status IN ('erro','pendente')").map(r => ({
+      id: r.id, b2Url: r.b2_url, b2FileName: r.b2_file_name, originalName: r.original_name, status: r.status,
+    }));
+  } else if (accountId) {
+    videos = db.allRaw("SELECT * FROM videos WHERE account_id=? AND faststart_checked=0 AND status IN ('erro','pendente')", [accountId]).map(r => ({
+      id: r.id, b2Url: r.b2_url, b2FileName: r.b2_file_name, originalName: r.original_name, status: r.status,
+    }));
+  } else {
+    return res.status(400).json({ error: 'forneça accountId, videoIds[] ou all=true' });
+  }
+
+  if (!videos.length) return res.json({ success: true, total: 0, message: 'Nenhum vídeo precisa de faststart' });
+
+  const jobId = require('uuid').v4();
+  const job = { total: videos.length, done: 0, fixed: 0, skipped: 0, errors: [], startedAt: Date.now() };
+  faststartJobs.set(jobId, job);
+
+  // Processa em background com concorrência limitada
+  (async () => {
+    const CONCURRENCY = 2; // não estourar CPU/banda do servidor
+    const queue = [...videos];
+    const workers = [];
+    for (let w = 0; w < CONCURRENCY; w++) {
+      workers.push((async () => {
+        while (queue.length) {
+          const v = queue.shift();
+          try {
+            const result = await videoLib.ensureFaststart(b2, v.b2Url, v.b2FileName);
+            if (result.changed) job.fixed++;
+            else job.skipped++;
+            db.updateVideo(v.id, { faststartChecked: 1 });
+            // Se estava com erro, reagendar pra agora
+            if (v.status === 'erro') {
+              db.updateVideo(v.id, { status: 'pendente', errorMsg: null, retries: 0, scheduledFor: new Date().toISOString() });
+              ig.scheduleVideo(v.id);
+            }
+            console.log(`[Faststart Job ${jobId}] ${job.done + 1}/${job.total} ${v.originalName} ${result.changed ? '✓ fixed' : '⊘ skip'}`);
+          } catch (e) {
+            job.errors.push({ id: v.id, name: v.originalName, error: e.message });
+            console.error(`[Faststart Job ${jobId}] ❌ ${v.originalName}: ${e.message}`);
+          }
+          job.done++;
+        }
+      })());
+    }
+    await Promise.all(workers);
+    job.finishedAt = Date.now();
+    console.log(`[Faststart Job ${jobId}] done. fixed=${job.fixed} skipped=${job.skipped} errors=${job.errors.length}`);
+  })().catch(e => { job.fatalError = e.message; });
+
+  res.json({ success: true, jobId, total: videos.length });
+});
+
+router.get('/admin/fix-faststart/:jobId', adminMiddleware, (req, res) => {
+  const job = faststartJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'job não encontrado (limpa após o servidor reiniciar)' });
+  res.json({
+    total: job.total,
+    done: job.done,
+    fixed: job.fixed,
+    skipped: job.skipped,
+    errors: job.errors,
+    finished: !!job.finishedAt,
+    durationMs: (job.finishedAt || Date.now()) - job.startedAt,
+  });
+});
 
 // ── ADMIN: diagnóstico de URL pública ─────────────────────────────
 // Testa se a URL gerada pelo storage é realmente acessível sem auth

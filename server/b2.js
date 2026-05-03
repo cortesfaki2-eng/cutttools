@@ -118,6 +118,26 @@ async function uploadStream(localPath, fileSize, originalName, folder = 'videos'
 }
 
 /**
+ * Sobe um arquivo local para uma key específica (substitui se já existir).
+ * Usado pelo pipeline de faststart pra reescrever o mesmo objeto sem mudar URL.
+ */
+async function uploadToKey(localPath, key) {
+  if (!isConfigured()) throw new Error('Storage não configurado');
+  const fileSize = fs.statSync(localPath).size;
+  const ext = path.extname(key);
+  const ct = getContentType(ext);
+  const stream = fs.createReadStream(localPath);
+  await client.send(new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    Body: stream,
+    ContentType: ct,
+    ContentLength: fileSize,
+  }));
+  return { url: `${publicUrl}/${key}`, key, bytes: fileSize };
+}
+
+/**
  * Deleta um arquivo do B2
  */
 async function deleteFile(fileName) {
@@ -152,4 +172,4 @@ async function getPresignedUploadUrl(key, contentType) {
   return { uploadUrl, fileUrl, contentType: ct };
 }
 
-module.exports = { configure, isConfigured, uploadFile, uploadStream, deleteFile, getPresignedUploadUrl };
+module.exports = { configure, isConfigured, uploadFile, uploadStream, uploadToKey, deleteFile, getPresignedUploadUrl };

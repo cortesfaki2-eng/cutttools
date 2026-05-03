@@ -41,6 +41,8 @@ async function init() {
   try { db.run(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT NULL`); } catch(e) {}
   try { db.run(`ALTER TABLE videos ADD COLUMN user_id TEXT DEFAULT NULL`); } catch(e) {}
   try { db.run(`ALTER TABLE accounts ADD COLUMN category_id TEXT DEFAULT NULL`); } catch(e) {}
+  // faststart_checked: marca vídeo cujo MP4 já passou pela correção de moov atom
+  try { db.run(`ALTER TABLE videos ADD COLUMN faststart_checked INTEGER DEFAULT 0`); } catch(e) {}
   db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_vs ON videos(status);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_va ON videos(account_id);`);
@@ -271,7 +273,7 @@ function insertVideo(v) {
   persist(); return getVideoById(v.id);
 }
 function updateVideo(id, patch) {
-  const map={status:'status',igPostId:'ig_post_id',postedAt:'posted_at',errorMsg:'error_msg',retries:'retries',scheduledFor:'scheduled_for',b2Url:'b2_url'};
+  const map={status:'status',igPostId:'ig_post_id',postedAt:'posted_at',errorMsg:'error_msg',retries:'retries',scheduledFor:'scheduled_for',b2Url:'b2_url',faststartChecked:'faststart_checked'};
   const f=[],v=[];
   for(const[k,col] of Object.entries(map)) if(patch[k]!==undefined){f.push(col+' = ?');v.push(patch[k]);}
   if(!f.length) return getVideoById(id);
@@ -302,7 +304,7 @@ function getStats(userId=null, isAdmin=false) {
 }
 
 function mapA(r) { if(!r)return null; return{id:r.id,userId:r.user_id,accessToken:r.access_token,igAccountId:r.ig_account_id,username:r.username,label:r.label,accountType:r.account_type,postsPerDay:r.posts_per_day,startTime:r.start_time,endTime:r.end_time,intervalMinutes:r.interval_minutes,intervalMode:r.interval_mode,status:r.status,totalPosts:r.total_posts,categoryId:r.category_id,addedAt:r.added_at,updatedAt:r.updated_at}; }
-function mapV(r) { if(!r)return null; return{id:r.id,accountId:r.account_id,username:r.username,originalName:r.original_name,batchName:r.batch_name,b2Url:r.b2_url,cloudinaryUrl:r.b2_url,b2FileId:r.b2_file_id,b2FileName:r.b2_file_name,bytes:r.bytes,duration:r.duration,caption:r.caption,hashtags:r.hashtags,cycle:r.cycle,scheduledFor:r.scheduled_for,status:r.status,igPostId:r.ig_post_id,postedAt:r.posted_at,errorMsg:r.error_msg,retries:r.retries,createdAt:r.created_at,updatedAt:r.updated_at}; }
+function mapV(r) { if(!r)return null; return{id:r.id,userId:r.user_id,accountId:r.account_id,username:r.username,originalName:r.original_name,batchName:r.batch_name,b2Url:r.b2_url,cloudinaryUrl:r.b2_url,b2FileId:r.b2_file_id,b2FileName:r.b2_file_name,bytes:r.bytes,duration:r.duration,caption:r.caption,hashtags:r.hashtags,cycle:r.cycle,scheduledFor:r.scheduled_for,status:r.status,igPostId:r.ig_post_id,postedAt:r.posted_at,errorMsg:r.error_msg,retries:r.retries,faststartChecked:r.faststart_checked||0,createdAt:r.created_at,updatedAt:r.updated_at}; }
 
 
 // ── Dashboard helpers (queries únicas, sem N+1) ──────────────────
