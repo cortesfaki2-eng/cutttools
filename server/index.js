@@ -29,7 +29,14 @@ async function start() {
   const b2 = require('./b2');
   const s = db.getAllSettings();
   if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
-    b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+    try {
+      b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+    } catch (e) {
+      console.error('\n❌ [STORAGE] CONFIG INVÁLIDA:', e.message);
+      console.error('   Servidor continua rodando, mas postagens vão falhar até consertar.\n');
+    }
+  } else {
+    console.warn('\n⚠️  [STORAGE] Backblaze/R2 não configurado — vá em ⚙️ Configurações.\n');
   }
 
   // Limpar sessões expiradas a cada hora

@@ -39,7 +39,11 @@ function getLastScheduledTime(accountId) {
 function configureB2FromDB() {
   const s = db.getAllSettings();
   if (s.b2KeyId && s.b2AppKey && s.b2Bucket && s.b2Endpoint) {
-    b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+    try {
+      b2.configure(s.b2KeyId, s.b2AppKey, s.b2Bucket, s.b2Endpoint, s.b2PublicUrl || '');
+    } catch (e) {
+      console.warn('[B2] configure falhou:', e.message);
+    }
   }
 }
 
@@ -536,6 +540,71 @@ function generateSchedule(total, postsPerDay, _ignored, startH, startM, endH=23,
   }
   return dates;
 }
+
+// ── ADMIN: diagnóstico de URL pública ─────────────────────────────
+// Testa se a URL gerada pelo storage é realmente acessível sem auth
+// (que é o que o Instagram precisa pra baixar o vídeo).
+router.get('/admin/check-b2-url', adminMiddleware, async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url obrigatorio (query)' });
+  const axios = require('axios');
+  try {
+    const r = await axios.head(url, { timeout: 10000, validateStatus: () => true });
+    const ct = r.headers['content-type'] || '';
+    const cl = r.headers['content-length'] || '';
+    const ok = r.status >= 200 && r.status < 300;
+    res.json({
+      ok,
+      status: r.status,
+      contentType: ct,
+      contentLength: cl,
+      hint: ok
+        ? 'URL acessível publicamente. Se IG ainda recusa, verifique Content-Type (deve ser video/mp4) e tamanho.'
+        : (r.status === 401 || r.status === 403)
+          ? 'AccessDenied — bucket NÃO está público. Habilite acesso público (R2.dev subdomain ou B2 Public Bucket) e configure b2PublicUrl em Configurações.'
+          : r.status === 404 ? 'Arquivo não existe nesse path.' : `HTTP ${r.status} — verifique URL.`,
+    });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, hint: 'Falha ao conectar — URL inválida, host inexistente ou bloqueado por firewall.' });
+  }
+});
+
+// ── ADMIN: migração das b2_url existentes ─────────────────────────
+// Substitui um prefixo nas URLs já salvas (ex: trocar endpoint S3 privado
+// por r2.dev público). Reseta vídeos com erro de download pra "pendente"
+// para serem re-tentados com a URL nova.
+router.post('/admin/fix-b2-urls', adminMiddleware, (req, res) => {
+  const { oldPrefix, newPrefix, retryErrors } = req.body || {};
+  if (!oldPrefix || !newPrefix) {
+    return res.status(400).json({ error: 'oldPrefix e newPrefix obrigatórios' });
+  }
+  if (!/^https?:\/\//.test(newPrefix)) {
+    return res.status(400).json({ error: 'newPrefix precisa começar com http(s)://' });
+  }
+
+  const matches = db.allRaw('SELECT COUNT(*) AS n FROM videos WHERE b2_url LIKE ?', [oldPrefix + '%']);
+  const total = matches[0]?.n || 0;
+  if (!total) return res.json({ success: true, updated: 0, retried: 0, message: 'Nenhuma URL com esse prefixo encontrada.' });
+
+  // Troca prefixo (sql.js não tem REPLACE prefix-only, mas como já filtramos por LIKE oldPrefix%, REPLACE é seguro)
+  db.runRaw(
+    "UPDATE videos SET b2_url = ? || SUBSTR(b2_url, LENGTH(?) + 1), updated_at=datetime('now') WHERE b2_url LIKE ?",
+    [newPrefix.replace(/\/$/, ''), oldPrefix.replace(/\/$/, ''), oldPrefix + '%']
+  );
+
+  let retried = 0;
+  if (retryErrors) {
+    const errors = db.allRaw("SELECT id FROM videos WHERE status='erro' AND b2_url LIKE ?", [newPrefix.replace(/\/$/, '') + '%']);
+    errors.forEach(r => {
+      db.updateVideo(r.id, { status: 'pendente', errorMsg: null, retries: 0, scheduledFor: new Date().toISOString() });
+      ig.scheduleVideo(r.id);
+      retried++;
+    });
+  }
+  db.persist();
+  console.log(`[Admin] fix-b2-urls: ${total} URLs trocadas (${oldPrefix} → ${newPrefix}), ${retried} videos com erro re-agendados.`);
+  res.json({ success: true, updated: total, retried });
+});
 
 router.delete('/videos/:id', async (req, res) => {
   const v = db.getVideoById(req.params.id);

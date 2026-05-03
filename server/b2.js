@@ -21,16 +21,38 @@ let publicUrl = '';
 
 function configure(keyId, appKey, bucket, endpoint, pubUrl) {
   bucketName = bucket;
-  publicUrl = pubUrl || `https://${bucket}.${endpoint.replace('https://','')}`;
-  // Detectar se é R2 (*.r2.cloudflarestorage.com) ou B2
-  // R2 usa virtual-hosted style (sem forcePathStyle) — necessário para presign funcionar corretamente
   const isR2 = endpoint && endpoint.includes('r2.cloudflarestorage.com');
+
+  // CRÍTICO: o endpoint S3 (r2.cloudflarestorage.com / s3.*.backblazeb2.com)
+  // NÃO é público — exige assinatura AWS. Se o usuário não setou b2PublicUrl,
+  // qualquer URL gerada a partir desse endpoint vai falhar quando o Instagram
+  // tentar baixar. Para R2 isso é sempre fatal; o R2.dev subdomain ou Custom
+  // Domain é obrigatório.
+  if (!pubUrl) {
+    if (isR2) {
+      throw new Error(
+        'Cloudflare R2 exige "URL Pública" configurada. ' +
+        'Habilite o R2.dev subdomain no painel do bucket (ou um Custom Domain) ' +
+        'e cole o resultado (https://pub-xxxxxxxxxxxxxxxxx.r2.dev) em ⚙️ Configurações.'
+      );
+    }
+    // Backblaze B2: aviso visível, mas não fatal — o virtual-hosted style funciona
+    // se o bucket for público. Ainda assim recomendar URL explícita.
+    console.warn('[B2] AVISO: b2PublicUrl não configurado. Usando fallback baseado no endpoint S3. ' +
+                 'Se o Instagram rejeitar com "could not be fetched", configure a URL pública (ex: https://f000.backblazeb2.com/file/<bucket>).');
+  }
+
+  publicUrl = (pubUrl || `https://${bucket}.${endpoint.replace('https://','')}`).replace(/\/$/, '');
+
+  // R2 usa virtual-hosted style (sem forcePathStyle) — necessário para presign funcionar corretamente
   client = new S3Client({
     endpoint,
     region: 'auto',
     credentials: { accessKeyId: keyId, secretAccessKey: appKey },
     forcePathStyle: !isR2, // R2: false (virtual-hosted) | B2: true (path-style)
   });
+
+  console.log(`[B2] Configurado: bucket=${bucket} publicUrl=${publicUrl} (${isR2 ? 'R2' : 'B2'})`);
 }
 
 function isConfigured() {

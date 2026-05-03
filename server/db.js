@@ -411,6 +411,8 @@ module.exports = {
   getAllUsers, updateUser, deleteUser,
   createSession, getSession, deleteSession, cleanExpiredSessions,
   logActivity, getActivityLogs,
+  // Raw helpers (uso admin)
+  runRaw: run, allRaw: all, persist,
   // Original
   getSetting, setSetting, getAllSettings,
   getAccounts, getAccountById, getAccountByIgId, getAccountByIdForUser, insertAccount, updateAccount, deleteAccount,
